@@ -20,6 +20,11 @@ set -o pipefail  # Catch errors in pipes
 SCRIPT_VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# MySQL image used for bootstrap/verify temp containers.
+# MUST match the runtime image (mysqlContainer/Dockerfile, docker-compose.*.yaml)
+# so the data dir provisioned here opens cleanly at runtime without an upgrade.
+MYSQL_IMAGE="mysql:8.0.42"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -184,6 +189,17 @@ prompt_password() {
 # Check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# Generate a random secret using openssl. Hard-fails if openssl is missing
+# rather than silently falling back to a weak literal default password.
+gen_secret() {
+    if ! command_exists openssl; then
+        log_error "openssl is required to generate secure database passwords but was not found."
+        echo "Install openssl and re-run, or supply passwords interactively (do NOT use weak defaults)." >&2
+        exit 1
+    fi
+    openssl rand -base64 12
 }
 
 # Check if we need sudo for docker
@@ -373,11 +389,16 @@ get_symbiota_code() {
         log_info "Copying Symbiota code from current repository..."
         REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-        # Use rsync if available, otherwise cp
+        # Use rsync if available, otherwise cp.
+        # Both paths exclude .git so the (potentially huge) VCS history is not
+        # copied into the deployed code tree.
         if command_exists rsync; then
             rsync -a --exclude='.git' "$REPO_ROOT/" "$CODE_DIR/"
         else
+            # cp has no native exclude: copy everything except .git via a glob,
+            # then prune any nested .git directories that slipped through.
             cp -r "$REPO_ROOT/." "$CODE_DIR/"
+            find "$CODE_DIR" -name '.git' -maxdepth 2 -exec rm -rf {} + 2>/dev/null || true
         fi
 
         log_success "Copied Symbiota code to $CODE_DIR"
@@ -418,19 +439,29 @@ collect_configuration() {
     # Database configuration
     echo ""
     log_info "Database configuration:"
-    MYSQL_ROOT_PASSWORD=$(prompt_password "MySQL root password" "$(openssl rand -base64 12 2>/dev/null || echo 'rootpass123')")
+    MYSQL_ROOT_PASSWORD=$(prompt_password "MySQL root password" "$(gen_secret)")
     MYSQL_DATABASE=$(prompt "MySQL database name" "symbiota")
 
     SYMBIOTA_READ_USER=$(prompt "Read-only database user" "symbreader")
-    SYMBIOTA_READ_PASSWORD=$(prompt_password "Read-only user password" "$(openssl rand -base64 12 2>/dev/null || echo 'readpass123')")
+    SYMBIOTA_READ_PASSWORD=$(prompt_password "Read-only user password" "$(gen_secret)")
 
     SYMBIOTA_WRITE_USER=$(prompt "Read-write database user" "symbwriter")
-    SYMBIOTA_WRITE_PASSWORD=$(prompt_password "Read-write user password" "$(openssl rand -base64 12 2>/dev/null || echo 'writepass123')")
+    SYMBIOTA_WRITE_PASSWORD=$(prompt_password "Read-write user password" "$(gen_secret)")
 
     # Admin password
     echo ""
     log_warning "The default Symbiota admin account is username: admin, password: admin"
     ADMIN_PASSWORD=$(prompt_password "New admin password (leave empty to keep default)" "")
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        echo ""
+        log_warning "############################################################"
+        log_warning "# SECURITY RISK: admin/admin will remain the login.        #"
+        log_warning "# Anyone who can reach this portal can take it over.        #"
+        log_warning "# Set ADMIN_PASSWORD now, or change it IMMEDIATELY after    #"
+        log_warning "# first login. DO NOT expose this instance publicly first.  #"
+        log_warning "############################################################"
+        echo ""
+    fi
 
     log_success "Configuration collected"
 }
@@ -513,23 +544,25 @@ setup_permissions() {
     cd "$CODE_DIR"
     for dir in "${writable_dirs[@]}"; do
         if [ -d "$dir" ]; then
-            chmod -R 777 "$dir" 2>/dev/null || log_warning "Could not set permissions on $dir"
+            chmod -R 770 "$dir" 2>/dev/null || log_warning "Could not set permissions on $dir"
             if [ "$VERBOSE" -eq 1 ]; then
                 log_info "Set permissions: $dir"
             fi
         else
             mkdir -p "$dir"
-            chmod -R 777 "$dir"
+            chmod -R 770 "$dir"
             if [ "$VERBOSE" -eq 1 ]; then
                 log_info "Created and set permissions: $dir"
             fi
         fi
     done
 
-    # Data directories already created with appropriate permissions
-    chmod -R 777 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not set permissions on content directory"
-    chmod -R 777 "$LOGS_DIR" 2>/dev/null || log_warning "Could not set permissions on logs directory"
-    chmod -R 777 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not set permissions on MySQL data directory"
+    # Data directories: least-privilege instead of world-writable 777.
+    # Content/logs are written by the www-data process (owner/group): 770.
+    # MySQL data dir is owned/used only by the mysqld user: 750.
+    chmod -R 770 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not set permissions on content directory"
+    chmod -R 770 "$LOGS_DIR" 2>/dev/null || log_warning "Could not set permissions on logs directory"
+    chmod -R 750 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not set permissions on MySQL data directory"
 
     log_success "File permissions configured"
 }
@@ -635,11 +668,9 @@ initialize_database() {
     local temp_compose="$CONTAINERS_DIR/.bootstrap-mysql.yaml"
 
     cat > "$temp_compose" <<EOF
-version: '3.8'
-
 services:
   mysql-bootstrap:
-    image: mysql:5.7
+    image: $MYSQL_IMAGE
     container_name: symbiota-mysql-bootstrap
     environment:
       MYSQL_ROOT_PASSWORD: $MYSQL_ROOT_PASSWORD
@@ -699,11 +730,22 @@ EOSQL
     log_coffee "Loading schema files - another coffee break!"
 
     local schema_dir="$CODE_DIR/config/schema"
+    # Apply in strict order: base schema, then core version patches, then the
+    # feature patches. Each file is guarded by an `if [ -f ]` check below so a
+    # missing file (e.g. patches still being authored on a parallel track)
+    # warns instead of aborting the bootstrap.
     local schema_files=(
         "3.0/db_schema-3.0.sql"
         "3.0/patches/db_schema_patch-3.1.sql"
         "3.0/patches/db_schema_patch-3.2.sql"
         "3.0/patches/db_schema_patch-3.3.sql"
+        "3.0/patches/db_schema_patch-3.4.sql"
+        "1.0/patches/db_schema_patch-batch-core.sql"
+        "1.0/patches/db_schema_patch-image-batching.sql"
+        "1.0/patches/db_schema_patch-batch-ingestion.sql"
+        "1.0/patches/db_schema_patch-ai-transcription.sql"
+        "1.0/patches/db_schema_patch-quick-entry.sql"
+        "1.0/patches/db_schema_patch-portal-mysql57-compat.sql"
     )
 
     for schema_file in "${schema_files[@]}"; do
@@ -761,11 +803,9 @@ verify_database_schema() {
     local temp_compose="$CONTAINERS_DIR/.bootstrap-verify.yaml"
 
     cat > "$temp_compose" <<EOF
-version: '3.8'
-
 services:
   mysql-verify:
-    image: mysql:5.7
+    image: $MYSQL_IMAGE
     container_name: symbiota-mysql-verify
     environment:
       MYSQL_ROOT_PASSWORD: $MYSQL_ROOT_PASSWORD

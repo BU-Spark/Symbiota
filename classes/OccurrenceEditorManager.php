@@ -1268,10 +1268,37 @@ class OccurrenceEditorManager {
 	
 
 	public function updateLastEdited($batchID, $currentImgId){
-		$query = "UPDATE batch SET last_edited = '$currentImgId' WHERE batchID = '$batchID'";
-		$success = $this->conn->query($query);
-
+		$success = false;
+		if (is_numeric($batchID) && is_numeric($currentImgId)) {
+			$sql = 'UPDATE batch SET last_edited = ? WHERE batchID = ?';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$batchID = (int)$batchID;
+				$currentImgId = (int)$currentImgId;
+				$stmt->bind_param('ii', $currentImgId, $batchID);
+				$success = $stmt->execute();
+				$stmt->close();
+			}
+		}
 		return $success;
+	}
+
+	// Resolve an imgid (media.mediaID) -> occid -> omoccurrences.collid; returns null when unknown.
+	public function getCollIdByImgId($imgId) {
+		$collId = null;
+		if (is_numeric($imgId)) {
+			$mid = (int)$imgId;
+			$sql = 'SELECT o.collid FROM media m INNER JOIN omoccurrences o ON m.occid = o.occid WHERE m.mediaID = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $mid);
+				$stmt->execute();
+				$stmt->bind_result($resolvedCollId);
+				if ($stmt->fetch()) {
+					$collId = $resolvedCollId;
+				}
+				$stmt->close();
+			}
+		}
+		return $collId;
 	}
 
 	private function getIdentifiers($occidStr) {
@@ -2994,14 +3021,20 @@ class OccurrenceEditorManager {
 		$batchId = is_numeric($batchId) ? (int)$batchId : null;
 		if ($batchId) {
 			foreach (array('mediaID', 'imgid') as $xrefCol) {
-				$sql = 'SELECT `' . $xrefCol . '` AS mid FROM batch_XREF WHERE batchID = ' . $batchId . ' ORDER BY ordinal ASC';
-				$result = $this->conn->query($sql);
-				if ($result) {
-					while ($row = $result->fetch_assoc()) {
-						$imgIDs[] = (int)$row['mid'];
+				// $xrefCol is a fixed whitelist value (not user input); batchId is parameterized.
+				$sql = 'SELECT `' . $xrefCol . '` AS mid FROM batch_XREF WHERE batchID = ? ORDER BY ordinal ASC';
+				if ($stmt = $this->conn->prepare($sql)) {
+					$stmt->bind_param('i', $batchId);
+					if ($stmt->execute()) {
+						$res = $stmt->get_result();
+						while ($row = $res->fetch_assoc()) {
+							$imgIDs[] = (int)$row['mid'];
+						}
+						$res->free();
+						$stmt->close();
+						break;
 					}
-					$result->free();
-					break;
+					$stmt->close();
 				}
 			}
 		}
@@ -3024,13 +3057,13 @@ class OccurrenceEditorManager {
 
 		if ($occid) {
 			$occid = (int)$occid;
-			$sql = 'SELECT catalogNumber FROM omoccurrences WHERE occid = ' . $occid . ' LIMIT 1';
-			$result = $this->conn->query($sql);
-			if ($result && $row = $result->fetch_assoc()) {
-				$barcode = $row['catalogNumber'];
-			}
-			if ($result) {
-				$result->free();
+			$sql = 'SELECT catalogNumber FROM omoccurrences WHERE occid = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $occid);
+				$stmt->execute();
+				$stmt->bind_result($cat);
+				if ($stmt->fetch()) $barcode = $cat;
+				$stmt->close();
 			}
 		}
 
@@ -3042,13 +3075,13 @@ class OccurrenceEditorManager {
 		$notes = null;
 		if (is_numeric($imgID)) {
 			$mid = (int)$imgID;
-			$sql = 'SELECT notes FROM media WHERE mediaID = ' . $mid . ' LIMIT 1';
-			$result = $this->conn->query($sql);
-			if ($result && $row = $result->fetch_assoc()) {
-				$notes = $row['notes'];
-			}
-			if ($result) {
-				$result->free();
+			$sql = 'SELECT notes FROM media WHERE mediaID = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $mid);
+				$stmt->execute();
+				$stmt->bind_result($n);
+				if ($stmt->fetch()) $notes = $n;
+				$stmt->close();
 			}
 		}
 		return $notes;
@@ -3058,13 +3091,13 @@ class OccurrenceEditorManager {
 		$occid = null;
 		if (is_numeric($imgId)) {
 			$mid = (int)$imgId;
-			$sql = 'SELECT occid FROM media WHERE mediaID = ' . $mid . ' LIMIT 1';
-			$result = $this->conn->query($sql);
-			if ($result && $row = $result->fetch_assoc()) {
-				$occid = $row['occid'];
-			}
-			if ($result) {
-				$result->free();
+			$sql = 'SELECT occid FROM media WHERE mediaID = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $mid);
+				$stmt->execute();
+				$stmt->bind_result($o);
+				if ($stmt->fetch()) $occid = $o;
+				$stmt->close();
 			}
 		}
 		return $occid;

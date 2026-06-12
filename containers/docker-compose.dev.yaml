@@ -10,7 +10,8 @@ services:
       dockerfile: Dockerfile
     container_name: symbiota-web-dev
     ports:
-      - "${HTTP_PORT:-8080}:80"
+      # Apache listens on 8080 inside the container (non-root); publish to host.
+      - "${HTTP_PORT:-8080}:8080"
     volumes:
       # Bind mount code for live editing
       - ${PROJECT_ROOT:-..}:/var/www/html/symbiota${SELINUX_FLAG}
@@ -24,7 +25,8 @@ services:
       # - ${CONTENT_DIR}:/var/www/html/symbiota/content${SELINUX_FLAG}
       # - ${LOGS_DIR}:/var/www/html/symbiota/content/logs${SELINUX_FLAG}
     depends_on:
-      - symbiota-db
+      symbiota-db:
+        condition: service_healthy
     networks:
       - symbiota-network
     environment:
@@ -37,12 +39,14 @@ services:
       dockerfile: Dockerfile
     container_name: symbiota-db-dev
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      # Fail fast if .env is missing rather than silently using weak defaults.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-symbiota}
-      MYSQL_USER: ${MYSQL_USER:-symbiota-user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-symbiota-pass}
+      MYSQL_USER: ${MYSQL_USER:?set in .env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
     ports:
-      - "${MYSQL_PORT:-33060}:3306"
+      # Bind to loopback only so the dev DB is not exposed on all interfaces.
+      - "127.0.0.1:${MYSQL_PORT:-33060}:3306"
     volumes:
       # Persistent database storage (use bind mount if data on separate filesystem)
       - ${MYSQL_DATA_DIR:-mysql-data}:/var/lib/mysql${SELINUX_FLAG}
@@ -51,6 +55,12 @@ services:
     networks:
       - symbiota-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   mysql-data:

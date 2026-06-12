@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y \
     php-exif \
     php-dom \
     php-xml \
+    util-linux \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,18 +57,29 @@ ENV APACHE_RUN_DIR=/var/run/apache2 \
     APACHE_RUN_GROUP=www-data \
     APACHE_PID_FILE=/var/run/apache2/apache2.pid
 
-# Configure Apache: create directories, enable modules and site
+# Configure Apache: create directories, enable modules and site.
+# Listen on 8080 (non-privileged) so the master can run as www-data, and make
+# the runtime/lock/log dirs writable by www-data (entrypoint drops privileges).
 RUN mkdir -p $APACHE_RUN_DIR $APACHE_LOCK_DIR $APACHE_LOG_DIR && \
+    sed -ri 's/^Listen 80$/Listen 8080/' /etc/apache2/ports.conf && \
     a2enmod php8.1 rewrite headers && \
     a2dissite 000-default.conf && \
-    a2ensite 002-symbiota.conf
+    a2ensite 002-symbiota.conf && \
+    chown -R www-data:www-data $APACHE_RUN_DIR $APACHE_LOCK_DIR $APACHE_LOG_DIR
 
 # Set working directory
 WORKDIR /var/www/html/symbiota
 
 # CRITICAL: Copy Symbiota application code into image
-# This makes the image immutable - code cannot be modified at runtime
-# Build context is repository root (../..)
+# This makes the image immutable - code cannot be modified at runtime.
+# Build context is repository root (../..).
+#
+# Scope: the root .dockerignore prunes everything that is NOT application code
+# from the build context before this COPY runs (.git/ and all VCS metadata,
+# containers/, docs, *.md, tests, node_modules, and ALL .env*/secret files).
+# That keeps the published image free of build tooling, history, and secrets
+# while remaining a single, robust exclusion list. Audit .dockerignore before
+# adding new top-level dirs so they don't leak into the image.
 COPY --chown=www-data:www-data . /var/www/html/symbiota/
 
 # Copy entrypoint script for runtime config overlay
@@ -85,12 +97,12 @@ RUN mkdir -p /var/www/html/symbiota/temp \
                  /var/www/html/symbiota/content/imglib && \
     chmod +x /entrypoint.sh
 
-# Expose HTTP port
-EXPOSE 80
+# Expose HTTP port (Apache listens on 8080 as the unprivileged www-data user)
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost/ || exit 1
+    CMD curl -f http://localhost:8080/ || exit 1
 
 # Use entrypoint script to overlay config at runtime, then start Apache
 ENTRYPOINT ["/entrypoint.sh"]

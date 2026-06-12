@@ -4,8 +4,8 @@ include_once($SERVER_ROOT.'/content/lang/collections/editor/occurrenceeditor.'.$
 
 header("Content-Type: text/html; charset=".$CHARSET);
 
-$occId = array_key_exists('occid',$_REQUEST)?$_REQUEST['occid']:'';
-$collId = array_key_exists('collid',$_REQUEST)?$_REQUEST['collid']:false;
+$occId = array_key_exists('occid',$_REQUEST)?filter_var($_REQUEST['occid'], FILTER_SANITIZE_NUMBER_INT):'';
+$collId = array_key_exists('collid',$_REQUEST)?filter_var($_REQUEST['collid'], FILTER_SANITIZE_NUMBER_INT):false;
 $tabTarget = array_key_exists('tabtarget',$_REQUEST)?$_REQUEST['tabtarget']:0;
 $goToMode = array_key_exists('gotomode',$_REQUEST)?$_REQUEST['gotomode']:0;
 $occIndex = array_key_exists('occindex',$_REQUEST)?$_REQUEST['occindex']:false;
@@ -830,7 +830,7 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['ACCES_NUM']) ? $LANG['ACCES_NUM'] : 'Accession Num.'); ?></span>
 									<span class="field-elem">
-										<input type="text" size = '50' name="accesNum" value="<?php echo $occArr["accesNum"]; ?>" onchange="fieldChanged('accesNum');" />
+										<input type="text" size = '50' name="accesNum" value="<?php echo htmlspecialchars($occArr["accesNum"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('accesNum');" />
 									</span>
 								</div>
 							<?php endif; ?>
@@ -841,13 +841,13 @@ else{
 										$filedUnderValue = isset($filedUnderDrop[$occArr["filedUnder"]]) ? $filedUnderDrop[$occArr["filedUnder"]] : null;
 									}
 									?>	
-									<input type="text" size="50" name="filedUnder" id="fffileunder" value="<?php echo array_key_exists('filedUnder',$occArr)?$occArr['filedUnder']:''; ?>" onchange="fieldChanged('filedUnder');" <?php if($isEditor > 2) echo 'disabled'; ?>/>
+									<input type="text" size="50" name="filedUnder" id="fffileunder" value="<?php echo array_key_exists('filedUnder',$occArr)?htmlspecialchars($occArr['filedUnder'], ENT_QUOTES, 'UTF-8'):''; ?>" onchange="fieldChanged('filedUnder');" <?php if($isEditor > 2) echo 'disabled'; ?>/>
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['CURR_NAME']) ? $LANG['CURR_NAME'] : 'Current Name'); ?></span>
 								<span class="field-elem">
-									<input type="text" size = '50' name="currName" id="ffcurrname" value="<?php echo $occArr["currName"]; ?>" onchange="fieldChanged('currName');" />
+									<input type="text" size = '50' name="currName" id="ffcurrname" value="<?php echo htmlspecialchars($occArr["currName"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('currName');" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -883,13 +883,13 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['DET_TEXT']) ? $LANG['DET_TEXT'] : 'Det. Text'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="detText" value="<?php echo $occArr["detText"]; ?>" onchange="fieldChanged('detText');" />
+										<input size = '50' type="text" name="detText" value="<?php echo htmlspecialchars($occArr["detText"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('detText');" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['PROVENANCE']) ? $LANG['PROVENANCE'] : 'Provenance'); ?></span>
 									<span class="field-elem">
-										<input type="text" size = '50' name="provenance" value="<?php echo $occArr["provenance"]; ?>" onchange="fieldChanged('provenance');" />
+										<input type="text" size = '50' name="provenance" value="<?php echo htmlspecialchars($occArr["provenance"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('provenance');" />
 									</span>
 								</div>
 							<?php endif; ?>
@@ -928,26 +928,26 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['CONTAINER']) ? $LANG['CONTAINER'] : 'Container'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="container" value="<?php echo $occArr["container"]; ?>" onchange="fieldChanged('container');" />
+										<input size = '50' type="text" name="container" value="<?php echo htmlspecialchars($occArr["container"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('container');" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['COLL_TRIP']) ? $LANG['COLL_TRIP'] : 'Collecting Trip'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="collTrip" id="ffcolltrip" value="<?php echo $occArr["collTrip"]; ?>" onchange="fieldChanged('collTrip');" />
+										<input size = '50' type="text" name="collTrip" id="ffcolltrip" value="<?php echo htmlspecialchars($occArr["collTrip"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('collTrip');" />
 									</span>
 								</div>
 							<?php endif; ?>
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['GEO_WITHIN']) ? $LANG['GEO_WITHIN'] : 'Geography Within'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="geoWithin" id="ffgeowithin" value="<?php echo $occArr["geoWithin"]; ?>" onchange="fieldChanged('geoWithin');" />
+									<input size = '50' type="text" name="geoWithin" id="ffgeowithin" value="<?php echo htmlspecialchars($occArr["geoWithin"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('geoWithin');" />
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['HIGH_GEO']) ? $LANG['HIGH_GEO'] : 'Higher Geography'); ?></span>
 								<span class="field-elem">
-									<input type="text" size = '50' name="highGeo" id="ffhighgeo" value="<?php echo $occArr["highGeo"]; ?>" onchange="fieldChanged('highGeo');" />
+									<input type="text" size = '50' name="highGeo" id="ffhighgeo" value="<?php echo htmlspecialchars($occArr["highGeo"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('highGeo');" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -966,7 +966,7 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['FREQUENCY']) ? $LANG['FREQUENCY'] : 'Frequency'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="frequency" value="<?php echo $occArr["frequency"]; ?>" onchange="fieldChanged('frequency');" />
+										<input size = '50' type="text" name="frequency" value="<?php echo htmlspecialchars($occArr["frequency"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('frequency');" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -999,13 +999,13 @@ else{
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['PREPMETHOD']) ? $LANG['PREPMETHOD'] : 'Prep Method'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="prepMethod" value="<?php echo $occArr["prepMethod"]; ?>" onchange="fieldChanged('prepMethod');"  />
+									<input size = '50' type="text" name="prepMethod" value="<?php echo htmlspecialchars($occArr["prepMethod"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('prepMethod');"  />
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['FORMAT']) ? $LANG['FORMAT'] : 'Format'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="format" value="<?php echo $occArr["format"]; ?>" onchange="fieldChanged('format');" />
+									<input size = '50' type="text" name="format" value="<?php echo htmlspecialchars($occArr["format"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('format');" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -1019,14 +1019,14 @@ else{
 									<span class="field-label"><?php echo (isset($LANG['VERBLAT']) ? $LANG['VERBLAT'] : 'Verb. Lat.'); ?></span>
 									<span class="field-elem">
 										<!-- TODO: need to update the onchange function later to make sure the input format is correct -->
-										<input size = '50' type="text" name="verbLat" value="<?php echo $occArr["verbLat"]; ?>" onchange="decimalLatitudeChanged(this.form)" />
+										<input size = '50' type="text" name="verbLat" value="<?php echo htmlspecialchars($occArr["verbLat"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="decimalLatitudeChanged(this.form)" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['VERBLONG']) ? $LANG['VERBLONG'] : 'Verb. Long.'); ?></span>
 									<span class="field-elem">
 										<!-- TODO: need to update the onchange function later to make sure the input format is correct -->
-										<input size = '50' type="text" name="verbLong" value="<?php echo $occArr["verbLong"]; ?>" onchange="decimalLatitudeChanged(this.form)" />
+										<input size = '50' type="text" name="verbLong" value="<?php echo htmlspecialchars($occArr["verbLong"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="decimalLatitudeChanged(this.form)" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -1056,7 +1056,7 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (isset($LANG['METHOD']) ? $LANG['METHOD'] : 'Method'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="method" value="<?php echo $occArr["method"]; ?>" onchange="fieldChanged('method');" />
+										<input size = '50' type="text" name="method" value="<?php echo htmlspecialchars($occArr["method"] ?? '', ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('method');" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -1090,7 +1090,7 @@ else{
 								<td>
 									<div id="bottomSubmitDiv">
 									<input type="hidden" name="csmode" value="<?php echo $crowdSourceMode; ?>">
-									<input type="hidden" name="collid" value="<?php echo $collId; ?>">
+									<input type="hidden" name="collid" value="<?php echo htmlspecialchars($collId, ENT_QUOTES, 'UTF-8'); ?>">
 									<input type="hidden" name="batchid" value="<?php echo $batchId !== null ? (int)$batchId : ''; ?>">
 									<input type="hidden" name="imgid" value="<?php echo $imgId; ?>">
 									<input type="hidden" name="imgindex" value="<?php echo $currentImgIndex; ?>">

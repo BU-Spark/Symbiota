@@ -219,16 +219,35 @@ Symbiota
         │       └── db_schema_patch-3.4.sql    # required on a v3.4.x checkout
         └── 1.0
             └── patches                        # custom-feature patches (apply last)
-                ├── db_schema_patch-image-batching.sql     # creates batch, batch_XREF, batch_user, images_barcode (apply BEFORE ai-transcription)
-                ├── db_schema_patch-batch-ingestion.sql    # batch ingestion support
-                ├── db_schema_patch-ai-transcription.sql   # creates ocr_results (ML transcription); FK_ocr_results_batch references batch, so this MUST follow image-batching
-                └── db_schema_patch-quick-entry.sql        # quick-entry support
+                ├── db_schema_patch-batch-core.sql          # creates the shared `batch` table (apply FIRST, before any feature below)
+                ├── db_schema_patch-image-batching.sql      # creates batch_XREF, batch_user, images_barcode (FK to batch)
+                ├── db_schema_patch-batch-ingestion.sql     # batch ingestion support
+                ├── db_schema_patch-ai-transcription.sql    # creates ocr_results (ML transcription); FK_ocr_results_batch references batch
+                ├── db_schema_patch-quick-entry.sql         # quick-entry support
+                └── db_schema_patch-portal-mysql57-compat.sql  # portal compat fixes (REQUIRED on MySQL 5.7 / STRICT mode)
 ```
+
+> **Apply order for the custom-feature patches.** Apply
+> `db_schema_patch-batch-core.sql` **FIRST** — it creates the shared `batch`
+> table. After that, the four feature patches
+> (`image-batching`, `batch-ingestion`, `ai-transcription`, `quick-entry`) can be
+> applied in any order, because each one's foreign keys to `batch` are satisfied
+> by batch-core. In other words, each feature is now applyable as
+> **(batch-core + that feature)** — you no longer have to apply image-batching
+> before ai-transcription. These patches are idempotent: they use
+> `CREATE TABLE IF NOT EXISTS`, guarded `ADD COLUMN`, and no `DROP TABLE`, so
+> re-running them will not wipe existing data.
+>
+> Finally, on **MySQL 5.7 or any server running with `STRICT_TRANS_TABLES`**,
+> apply `db_schema_patch-portal-mysql57-compat.sql` **after** patch 3.4 — it makes
+> the `omoccurdeterminations.dateLastModified` and `mediametadata.created_at`/
+> `updated_at` timestamp columns explicitly NULL-able. (Harmless on MySQL 8, but
+> required on 5.7.)
 
 > **Do not skip patch 3.4 or the custom-feature patches.** On a `v3.4.x`
 > checkout, `db_schema_patch-3.4.sql` is required (it adds the `mediametadata`
-> table, etc.). The four custom-feature patches under `config/schema/1.0/patches/`
-> create the ML/batch tables this fork depends on (`ocr_results`, `batch`,
+> table, etc.). The custom-feature patches under `config/schema/1.0/patches/`
+> create the ML/batch tables this fork depends on (`batch`, `ocr_results`,
 > `batch_XREF`, and related). If you omit them the portal will start but those
 > features silently have no backing tables.
 
@@ -256,10 +275,12 @@ for f in patches/db_schema_patch-3.*.sql; do
   echo "Applying $f"
   mysql -u root -p symbdb < "$f"
 done
-# Custom-feature patches (apply after the 3.x patches). Order matters:
-# image-batching must precede ai-transcription, because ocr_results' FK
-# (FK_ocr_results_batch) references the batch table created by image-batching.
-for f in ../1.0/patches/db_schema_patch-{image-batching,batch-ingestion,ai-transcription,quick-entry}.sql; do
+# Custom-feature patches (apply after the 3.x patches). batch-core MUST be first
+# (it creates the shared `batch` table that the feature patches FK to); the rest
+# may be applied in any order. Each feature is applyable as (batch-core + feature).
+# The portal-mysql57-compat patch is applied last and is required on MySQL 5.7 /
+# STRICT mode (harmless on MySQL 8).
+for f in ../1.0/patches/db_schema_patch-{batch-core,image-batching,batch-ingestion,ai-transcription,quick-entry,portal-mysql57-compat}.sql; do
   echo "Applying $f"
   mysql -u root -p symbdb < "$f"
 done
@@ -282,10 +303,11 @@ docker exec -i -w /source/3.0 symbiota-db-dev \
 for f in config/schema/3.0/patches/db_schema_patch-3.*.sql; do
   docker exec -i -w /source/3.0 symbiota-db-dev mysql -uroot -ppassword symbiota < "$f"
 done
-# Order matters: image-batching must precede ai-transcription, because
-# ocr_results' FK (FK_ocr_results_batch) references the batch table created by
-# image-batching.
-for f in config/schema/1.0/patches/db_schema_patch-{image-batching,batch-ingestion,ai-transcription,quick-entry}.sql; do
+# batch-core MUST be applied first (it creates the shared `batch` table the
+# feature patches FK to); the remaining feature patches may be applied in any
+# order. The portal-mysql57-compat patch is required on MySQL 5.7 / STRICT mode
+# (harmless on MySQL 8).
+for f in config/schema/1.0/patches/db_schema_patch-{batch-core,image-batching,batch-ingestion,ai-transcription,quick-entry,portal-mysql57-compat}.sql; do
   docker exec -i symbiota-db-dev mysql -uroot -ppassword symbiota < "$f"
 done
 ```
