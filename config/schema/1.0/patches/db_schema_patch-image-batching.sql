@@ -1,22 +1,13 @@
 INSERT IGNORE INTO schemaversion (versionnumber) values ("image-batching-patch");
 
--- Create batch table
-DROP TABLE IF EXISTS `batch`;
-CREATE TABLE `batch` (
-  `batchID` int(11) NOT NULL AUTO_INCREMENT,
-  `ingest_date` timestamp NOT NULL,
-  `completed_date` timestamp NULL,
-  `batch_name` varchar(100) NOT NULL,
-  `image_batch_path` varchar(100) NOT NULL,
-  `initialtimestamp` TIMESTAMP NULL DEFAULT current_timestamp,
-  `last_edited` int(11) NULL,
-  `collID` int(11) NOT NULL,
-  PRIMARY KEY (`batchID`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+-- NOTE: The core `batch` table has been split out into
+-- db_schema_patch-batch-core.sql. Apply batch-core FIRST: the tables below
+-- (batch_XREF, batch_user) FK to `batch`, so this patch is applied as
+-- (batch-core + image-batching). No DROP TABLE here, and every CREATE uses
+-- IF NOT EXISTS, so re-running this patch never wipes existing data.
 
 -- Create cross-reference table between the batch table and images table
-DROP TABLE IF EXISTS `batch_XREF`;
-CREATE TABLE `batch_XREF` (
+CREATE TABLE IF NOT EXISTS `batch_XREF` (
   `imgid` int(10) unsigned NOT NULL,
   `batchID` int(11) NOT NULL,
   `ordinal` INT(10) NOT NULL,
@@ -29,8 +20,7 @@ CREATE TABLE `batch_XREF` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- Create batch user table
-DROP TABLE IF EXISTS `batch_user`;
-CREATE TABLE `batch_user` (
+CREATE TABLE IF NOT EXISTS `batch_user` (
   `batch_userID` int(10) NOT NULL AUTO_INCREMENT,
   `batchID` int(10) NOT NULL,
   `uid` int(10) unsigned NOT NULL,
@@ -43,8 +33,7 @@ CREATE TABLE `batch_user` (
   CONSTRAINT `FK_batch_user_user` FOREIGN KEY (`uid`) REFERENCES `users` (`uid`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-DROP TABLE IF EXISTS `images_barcode`;
-CREATE TABLE `images_barcode` (
+CREATE TABLE IF NOT EXISTS `images_barcode` (
   `imgid` int(10) unsigned NOT NULL,
   `barcode` varchar(255) NOT NULL,
   `occid` int unsigned NOT NULL,
