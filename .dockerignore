@@ -1,7 +1,10 @@
-# Git files
+# Git files (never bake VCS history/metadata into the published image)
 .git
+.git/**
+**/.git
 .gitignore
 .gitattributes
+.github/
 
 # Documentation
 *.md
@@ -19,14 +22,23 @@ documentation/
 *~
 .DS_Store
 
-# Container development files
-containers/docker-compose.dev.yaml
-containers/.env
-containers/.env.example
-containers/scripts/
-containers/systemd/
+# Container development/build files — none of this belongs in the app image.
+# The whole containers/ tree (compose files, Dockerfiles, bootstrap scripts,
+# systemd units, env examples) is build tooling, not application code.
+containers/
 docker/
 .dockerignore
+
+# Secrets and any local env files — must never be copied into the image.
+# (Config is overlaid at runtime via the read-only /config-overlay mount.)
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+secrets/
+.secrets/
 
 # Runtime data directories (will be mounted at runtime)
 temp/*

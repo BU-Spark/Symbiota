@@ -78,13 +78,30 @@ fi
 echo ""
 
 echo "Configuring Apache logging to stdout..."
-# Redirect Apache error log to stdout so podman logs can capture it
+# Redirect Apache error log to stdout so podman/docker logs can capture it.
 ln -sf /proc/self/fd/1 /var/log/apache2/error.log
 ln -sf /proc/self/fd/1 /var/log/apache2/access.log
+# Ensure the unprivileged user can write the log targets / run dirs.
+chown -h www-data:www-data /var/log/apache2/error.log /var/log/apache2/access.log 2>/dev/null || true
+chown -R www-data:www-data /var/run/apache2 /var/lock/apache2 /var/log/apache2 2>/dev/null || true
 
-echo "Starting Apache..."
+echo "Starting Apache as the unprivileged www-data user..."
 echo "========================================="
 echo ""
 
-# Start Apache in foreground
-exec apache2ctl -D FOREGROUND
+# All the steps above (config overlay, chown, log symlinks) require root.
+# Now drop privileges so the Apache MASTER process does NOT run as root.
+# Apache listens on 8080 (a non-privileged port; see ports.conf / 002-symbiota.conf),
+# which www-data is allowed to bind. We keep PID 1 by exec-ing setpriv, which
+# itself execs apache2ctl, so signal handling / clean shutdown still work.
+#
+# Prefer setpriv (util-linux, installed in the image); fall back to gosu if
+# present; if neither exists, warn and start as root rather than fail to boot.
+if command -v setpriv >/dev/null 2>&1; then
+    exec setpriv --reuid=www-data --regid=www-data --init-groups apache2ctl -D FOREGROUND
+elif command -v gosu >/dev/null 2>&1; then
+    exec gosu www-data apache2ctl -D FOREGROUND
+else
+    echo "WARNING: neither setpriv nor gosu found; starting Apache as root (master will be root)."
+    exec apache2ctl -D FOREGROUND
+fi

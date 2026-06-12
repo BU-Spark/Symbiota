@@ -13,20 +13,28 @@
 
 services:
   symbiota:
-    # Build from source (recommended for community deployments)
-    build:
-      context: ../..  # Repository root (two dirs up from containers/)
-      dockerfile: containers/ubuntuContainer/Dockerfile.prod
-      platforms:
-        - linux/amd64
-        - linux/arm64
+    # DEFAULT: pull the pinned, pre-built production image from Quay.
+    # Pin to an immutable digest in real deployments, e.g.:
+    #   image: quay.io/langdon/se-symbiota@sha256:<digest>
+    # The tag below is overridable via QUAY_REGISTRY / IMAGE_TAG in .env
+    # (see .env.alpha.example). Tags are mutable; prefer a @sha256 digest.
+    image: ${QUAY_REGISTRY:-quay.io/langdon/se-symbiota}:${IMAGE_TAG:-v3.2.4-alpha}
 
-    # Alternative: Use a pre-built image registry (not officially supported)
-    # image: your-registry.example.com/symbiota:tag
+    # ALTERNATIVE (opt-in): build from source for community deployments.
+    # Comment out the `image:` line above and uncomment this block.
+    # build:
+    #   context: ../..  # Repository root (two dirs up from containers/)
+    #   dockerfile: containers/ubuntuContainer/Dockerfile.prod
+    #   platforms:
+    #     - linux/amd64
+    #     - linux/arm64
 
     container_name: symbiota-web
     ports:
-      - "${HTTP_PORT:-80}:80"
+      # Apache listens on 8080 inside the container (runs as non-root www-data).
+      # Publish it on the host's port 80 (or HTTP_PORT) — host-side privileged
+      # binding is handled by the Docker daemon, not the container process.
+      - "${HTTP_PORT:-80}:8080"
 
     volumes:
       # Mount ONLY runtime data directories, NOT application code
@@ -66,7 +74,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
