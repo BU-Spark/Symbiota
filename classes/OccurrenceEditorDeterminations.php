@@ -25,15 +25,19 @@ class OccurrenceEditorDeterminations extends OccurrenceEditorManager{
 		}
 		$mid = (int)$imgID;
 		foreach (array('mediaID', 'imgid') as $xrefCol) {
-			$sql = 'SELECT ordinal FROM batch_XREF WHERE `' . $xrefCol . '` = ' . $mid . ' LIMIT 1';
-			$result = $this->conn->query($sql);
-			if ($result && $row = $result->fetch_assoc()) {
-				$imgIndex = $row['ordinal'];
-				$result->free();
-				break;
-			}
-			if ($result) {
-				$result->free();
+			// $xrefCol is a fixed whitelist value (not user input); mid is parameterized.
+			$sql = 'SELECT ordinal FROM batch_XREF WHERE `' . $xrefCol . '` = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $mid);
+				if ($stmt->execute()) {
+					$stmt->bind_result($ord);
+					if ($stmt->fetch()) {
+						$imgIndex = $ord;
+						$stmt->close();
+						break;
+					}
+				}
+				$stmt->close();
 			}
 		}
 		return $imgIndex;
@@ -41,36 +45,53 @@ class OccurrenceEditorDeterminations extends OccurrenceEditorManager{
 
 	public function getlastEdit($batchID) {
 		$lastEditImgId = false;
-		$query = "SELECT last_edited FROM batch WHERE batchID = '$batchID' LIMIT 1";
-		$result = $this->conn->query($query);
-
-		if ($result && $row = $result->fetch_assoc()) {
-			$lastEditImgId = $row['last_edited'];
+		if (is_numeric($batchID)) {
+			$batchID = (int)$batchID;
+			$sql = 'SELECT last_edited FROM batch WHERE batchID = ? LIMIT 1';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $batchID);
+				$stmt->execute();
+				$stmt->bind_result($le);
+				if ($stmt->fetch()) $lastEditImgId = $le;
+				$stmt->close();
+			}
 		}
-		$result->free();
-
 		return $lastEditImgId;
 	}
 
 	public function getBatch($collid) {
-		$batchValues = array();	
-		$query = "SELECT batchID FROM batch WHERE collID = '$collid'";
-        $result = $this->conn->query($query);
-        while ($row = $result->fetch_assoc()) {
-            $batchValues[] = $row['batchID'];
-        }
-        $result->free();
-        return $batchValues;
+		$batchValues = array();
+		if (is_numeric($collid)) {
+			$collid = (int)$collid;
+			$sql = 'SELECT batchID FROM batch WHERE collID = ?';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $collid);
+				$stmt->execute();
+				$stmt->bind_result($bid);
+				while ($stmt->fetch()) {
+					$batchValues[] = $bid;
+				}
+				$stmt->close();
+			}
+		}
+		return $batchValues;
 	}
 
 	public function getBatchName($batchID) {
 		$nameValues = array();
-		$query = "SELECT batch_name FROM batch WHERE batchID = '$batchID'";
-		$result = $this->conn->query($query);
-		while ($row = $result->fetch_assoc()) {
-			$nameValues[] = $row['batch_name'];
+		if (is_numeric($batchID)) {
+			$batchID = (int)$batchID;
+			$sql = 'SELECT batch_name FROM batch WHERE batchID = ?';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$stmt->bind_param('i', $batchID);
+				$stmt->execute();
+				$stmt->bind_result($bn);
+				while ($stmt->fetch()) {
+					$nameValues[] = $bn;
+				}
+				$stmt->close();
+			}
 		}
-		$result->free();
 		return $nameValues;
 	}
 
