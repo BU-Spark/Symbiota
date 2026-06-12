@@ -22,9 +22,9 @@ CREATE TABLE IF NOT EXISTS `ocr_results` (
 -- Guarded per-column ADD so re-runs are idempotent on MySQL 5.7 AND 8.0
 -- (MySQL has no ADD COLUMN IF NOT EXISTS; use information_schema + prepared stmt, no DELIMITER/proc).
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='omoccurrences' AND COLUMN_NAME='is_machine_generated');
-SET @s := IF(@c>0,'SELECT 1',"ALTER TABLE `omoccurrences` ADD COLUMN `is_machine_generated` BOOL DEFAULT 0");
+SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `is_machine_generated` BOOL DEFAULT 0");
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='omoccurrences' AND COLUMN_NAME='confidence_value');
-SET @s := IF(@c>0,'SELECT 1',"ALTER TABLE `omoccurrences` ADD COLUMN `confidence_value` double DEFAULT NULL");
+SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `confidence_value` double DEFAULT NULL");
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
