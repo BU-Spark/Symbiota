@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS `batch_XREF` (
   PRIMARY KEY (`imgid`,`batchID`),
   KEY `FK_batch_XREF_img` (`imgid`),
   KEY `FK_batch_XREF_batch` (`batchID`),
-  CONSTRAINT `FK_batch_XREF_img` FOREIGN KEY (`imgid`) REFERENCES `images` (`imgid`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `FK_batch_XREF_img` FOREIGN KEY (`imgid`) REFERENCES `media` (`mediaID`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `FK_batch_XREF_batch` FOREIGN KEY (`batchID`) REFERENCES `batch` (`batchID`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -40,6 +40,6 @@ CREATE TABLE IF NOT EXISTS `images_barcode` (
   PRIMARY KEY (`barcode`),
   KEY `FK_images_barcode_images` (`imgid`),
   KEY `FK_images_barcode_omoccurrences` (`occid`),
-  CONSTRAINT `FK_images_barcode_images` FOREIGN KEY (`imgid`) REFERENCES `images` (`imgid`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `FK_images_barcode_images` FOREIGN KEY (`imgid`) REFERENCES `media` (`mediaID`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `FK_images_barcode_omoccurrences` FOREIGN KEY (`occid`) REFERENCES `omoccurrences` (`occid`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

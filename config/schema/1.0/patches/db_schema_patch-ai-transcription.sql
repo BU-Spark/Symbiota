@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS `ocr_results` (
   PRIMARY KEY (`imgid`,`batchID`),
   KEY `FK_ocr_results_img` (`imgid`),
   KEY `FK_ocr_results_batch` (`batchID`),
-  CONSTRAINT `FK_ocr_results_img` FOREIGN KEY (`imgid`) REFERENCES `images` (`imgid`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `FK_ocr_results_img` FOREIGN KEY (`imgid`) REFERENCES `media` (`mediaID`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `FK_ocr_results_batch` FOREIGN KEY (`batchID`) REFERENCES `batch` (`batchID`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
