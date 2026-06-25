@@ -403,3 +403,31 @@ form label:has(+ input[required]):after {
 	color: red;
 	content: '*';
 }
+
+/* ===========================================================================
+   ML confidence display for OCR-populated fields
+   (set programmatically by collections.editor.imgtools.js)
+   Inline background-color from JS wins; these provide a hover cue + the
+   jQuery UI tooltip styling. Confidence bands:
+     high   >= 0.85  green  (#77dd77)
+     medium 0.6-0.85 amber  (#ffd27f)
+     low    < 0.6    red    (#ff9b9b)
+     none   populated, no score  gray (#d9d9d9)
+   =========================================================================== */
+.ml-confidence-field {
+	cursor: help;
+}
+.ml-confidence-field:focus {
+	/* keep the confidence color visible while editing */
+	outline: 2px solid #4a90d9;
+}
+.ui-tooltip {
+	max-width: 240px;
+	font-size: 0.85em;
+	padding: 4px 8px;
+	background: #333;
+	color: #fff;
+	border: 1px solid #222;
+	border-radius: 3px;
+	box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}

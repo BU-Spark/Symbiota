@@ -1,6 +1,109 @@
 var activeImgIndex = 1;
 var ocrFragIndex = 1;
 
+// ===========================================================================
+// ML confidence display helpers (shared by quickEntryOcrImage + pushDwcArrToForm)
+// ---------------------------------------------------------------------------
+// The middleware may return a structured envelope of the form:
+//   { "scientificName": "...", "recordedBy": "...",
+//     "_confidence": { "scientificName": 0.92, ... }, "_meta": {...} }
+// Confidence keys arrive camelCase (DWC); form element names are lowercase.
+// ===========================================================================
+
+// Map camelCase DWC keys -> lowercase form element names. Used by BOTH handlers.
+var dwcToFormField = {
+	scientificName: "sciname",
+	scientificNameAuthorship: "scientificnameauthorship",
+	recordedBy: "recordedby",
+	recordNumber: "recordnumber",
+	eventDate: "eventdate",
+	verbatimEventDate: "verbatimeventdate",
+	family: "family",
+	catalogNumber: "catalognumber",
+	country: "country",
+	stateProvince: "stateprovince",
+	county: "county",
+	continent: "continent",
+	locality: "locality",
+	habitat: "habitat",
+	occurrenceRemarks: "occurrenceremarks",
+	identifiedBy: "identifiedby",
+	dateIdentified: "dateidentified",
+	decimalLatitude: "decimallatitude",
+	decimalLongitude: "decimallongitude",
+	minimumElevationInMeters: "minimumelevationinmeters",
+	maximumElevationInMeters: "maximumelevationinmeters",
+	verbatimElevation: "verbatimelevation",
+	verbatimCoordinates: "verbatimcoordinates",
+	associatedTaxa: "associatedtaxa"
+};
+
+// Background colors keyed by confidence band.
+var CONFIDENCE_COLORS = {
+	high: "#77dd77",      // c >= 0.85  (green)
+	medium: "#ffd27f",    // 0.6 <= c < 0.85 (amber)
+	low: "#ff9b9b",       // c < 0.6 (red)
+	neutral: "#d9d9d9"    // populated but no/invalid score (gray)
+};
+
+// Return a background color for a confidence value. Coerces with Number();
+// null/undefined/NaN -> neutral. Never throws.
+function confidenceColor(c){
+	if(c === null || typeof c === "undefined") return CONFIDENCE_COLORS.neutral;
+	var n = Number(c);
+	if(isNaN(n)) return CONFIDENCE_COLORS.neutral;
+	if(n >= 0.85) return CONFIDENCE_COLORS.high;
+	if(n >= 0.6) return CONFIDENCE_COLORS.medium;
+	return CONFIDENCE_COLORS.low;
+}
+
+// Apply confidence-based coloring + a hover tooltip to a populated form field.
+// elem: DOM element; fieldKey: camelCase DWC key; confidenceMap: optional _confidence obj.
+// Only the numeric score is ever rendered (no raw response text -> no XSS).
+function applyConfidenceToField(elem, fieldKey, confidenceMap){
+	if(!elem) return;
+	var rawC = (confidenceMap && typeof confidenceMap === "object") ? confidenceMap[fieldKey] : undefined;
+
+	// Determine whether we have a usable numeric score.
+	var hasScore = !(rawC === null || typeof rawC === "undefined");
+	var n = hasScore ? Number(rawC) : NaN;
+	if(hasScore && isNaN(n)) hasScore = false;
+
+	// Color the field.
+	elem.style.backgroundColor = confidenceColor(hasScore ? n : null);
+	elem.classList.add("ml-confidence-field");
+
+	if(hasScore){
+		elem.setAttribute("data-confidence", n);
+		var pct = Math.round(n * 100);
+		// title text is built only from the numeric score -> safe.
+		elem.setAttribute("title", "ML confidence: " + pct + "%");
+	}
+	else{
+		elem.removeAttribute("data-confidence");
+		elem.setAttribute("title", "ML confidence: unavailable");
+	}
+
+	// Attach jQuery UI tooltip (already loaded). Safe: reads the title attr only.
+	try{
+		if(typeof $ !== "undefined" && $(elem).tooltip){
+			$(elem).tooltip({ items: "[title]", track: true });
+		}
+	}
+	catch(err){ /* tooltip not available; title attr still shows native tooltip */ }
+}
+
+// Detect the structured envelope: an object carrying a _confidence map and/or
+// at least one recognized DWC key. Plain OCR text (string) returns false.
+function isStructuredOcrEnvelope(obj){
+	if(!obj || typeof obj !== "object") return false;
+	if(obj._confidence && typeof obj._confidence === "object") return true;
+	for(var key in dwcToFormField){
+		if(Object.prototype.hasOwnProperty.call(obj, key)) return true;
+	}
+	return false;
+}
+
 $(document).ready(function() {
 	//Remember image popout status 
 	var imgTd = getCookie("symbimgtd");
@@ -482,7 +585,11 @@ function nlpSalix(nlpButton,prlid){
 	});
 }
 
-function pushDwcArrToForm(msg,bgColor){
+// confArg (optional 3rd param) may be either a _confidence map object, OR
+// omitted. If the parsed message itself carries a "_confidence" key it is used
+// as a fallback. Fields keyed lowercase in the form are matched to camelCase
+// confidence keys via dwcToFormField (reverse lookup).
+function pushDwcArrToForm(msg,bgColor,confArg){
 	try{
 		var dwcArr = $.parseJSON(msg);
 		var f = document.fullform;
@@ -490,8 +597,21 @@ function pushDwcArrToForm(msg,bgColor){
 		//var fieldsSkip = "";
 		var scinameTransferred = false;
 		var verbatimElevTransferred = false;
+
+		// Resolve a confidence map: explicit arg wins, else any _confidence on the payload.
+		var confidenceMap = (confArg && typeof confArg === "object") ? confArg :
+			((dwcArr && typeof dwcArr._confidence === "object") ? dwcArr._confidence : null);
+
+		// Build a reverse lookup: lowercase form name -> camelCase DWC key (for confidence).
+		var formNameToDwc = {};
+		for(var dwcKey in dwcToFormField){
+			formNameToDwc[dwcToFormField[dwcKey]] = dwcKey;
+		}
+
 		for(var k in dwcArr){
 			try{
+				// Skip envelope/meta keys.
+				if(k == '_confidence' || k == '_meta') continue;
 				if(k != 'family' && k != 'scientificnameauthorship'){
 					var elem = f.elements[k];
 					var inVal = dwcArr[k];
@@ -499,7 +619,14 @@ function pushDwcArrToForm(msg,bgColor){
 						if(k == "sciname") scinameTransferred = true;
 						if(k == "verbatimelevation") verbatimElevTransferred = true;
 						elem.value = inVal;
-						elem.style.backgroundColor = bgColor;
+						// Confidence-based coloring when a score is available; else fall back to bgColor.
+						var dwcK = formNameToDwc[k];
+						if(confidenceMap && dwcK && typeof confidenceMap[dwcK] !== "undefined" && confidenceMap[dwcK] !== null){
+							applyConfidenceToField(elem, dwcK, confidenceMap);
+						}
+						else{
+							elem.style.backgroundColor = bgColor;
+						}
 						//fieldsTransfer = fieldsTransfer + ", " + k;
 						fieldChanged(k);
 					}
@@ -591,32 +718,69 @@ function quickEntryOcrImage(ocrButton, imgidVar, imgCnt, imgURl) {
 				try {
 					decodedResponse = JSON.parse(response);
 				} catch (e) {
-					console.error("Error parsing JSON response:", e);
+					// Plain text response (e.g. tesseract/others) - not JSON.
 					decodedResponse = response;
 				}
 			} else {
 				decodedResponse = response;
 			}
 
-			let plainTextResponse = "";
-			if (typeof decodedResponse === "object") {
+			let rawtextBox = document.getElementById("rawtext");
+
+			// BRANCH: structured envelope (Azure) vs. plain text (tesseract/others).
+			if (isStructuredOcrEnvelope(decodedResponse)) {
+				let confidenceMap = (decodedResponse._confidence && typeof decodedResponse._confidence === "object")
+					? decodedResponse._confidence : null;
+
+				// Populate matching form fields (only empty/enabled/non-hidden) and
+				// color/tooltip each by confidence. Never clobber a human edit.
+				for (const [dwcKey, formName] of Object.entries(dwcToFormField)) {
+					if (!Object.prototype.hasOwnProperty.call(decodedResponse, dwcKey)) continue;
+					let val = decodedResponse[dwcKey];
+					if (val === null || typeof val === "undefined" || val === "") continue;
+
+					let elem = document.querySelector('[name="' + formName + '"]');
+					if (elem && elem.value === "" && elem.disabled === false && elem.type !== "hidden") {
+						elem.value = val;
+						applyConfidenceToField(elem, dwcKey, confidenceMap);
+						if (typeof fieldChanged === "function") fieldChanged(formName);
+					}
+				}
+
+				// Also build a readable plain-text version for the rawtext box (reference).
+				// Only DWC value fields are included; _confidence/_meta are excluded.
+				let plainTextResponse = "";
 				for (const [key, value] of Object.entries(decodedResponse)) {
+					if (key === "_confidence" || key === "_meta") continue;
 					plainTextResponse += `${key}: ${value}\n`;
 				}
-			} else {
-				plainTextResponse = decodedResponse;
+				if (ocrAnalysisMode) {
+					plainTextResponse = normalizeFieldValueText(plainTextResponse);
+				}
+				storedOcrResponse = plainTextResponse;
+				if (rawtextBox) rawtextBox.value = plainTextResponse;
 			}
+			else {
+				// Plain text path (tesseract/others): preserve existing behavior exactly.
+				let plainTextResponse = "";
+				if (typeof decodedResponse === "object") {
+					for (const [key, value] of Object.entries(decodedResponse)) {
+						plainTextResponse += `${key}: ${value}\n`;
+					}
+				} else {
+					plainTextResponse = decodedResponse;
+				}
 
-			if(ocrAnalysisMode){
-				plainTextResponse = normalizeFieldValueText(plainTextResponse);
+				if (ocrAnalysisMode) {
+					plainTextResponse = normalizeFieldValueText(plainTextResponse);
+				}
+
+				// Store in global variable for later use
+				storedOcrResponse = plainTextResponse;
+
+				// Update the textarea
+				if (rawtextBox) rawtextBox.value = plainTextResponse;
 			}
-
-			// Store in global variable for later use
-			storedOcrResponse = plainTextResponse;
-
-			// Update the textarea
-			let rawtextBox = document.getElementById("rawtext");
-			rawtextBox.value = plainTextResponse;
 
 			if (wcElem) {
 				wcElem.style.display = "none";
