@@ -52,6 +52,9 @@ function confidenceColor(c){
 	if(c === null || typeof c === "undefined") return CONFIDENCE_COLORS.neutral;
 	var n = Number(c);
 	if(isNaN(n)) return CONFIDENCE_COLORS.neutral;
+	// Contract is 0..1; an out-of-range score (e.g. a 0-100 percentage from a
+	// misconfigured backend) is unexpected -> show neutral, never fake "high".
+	if(n < 0 || n > 1) return CONFIDENCE_COLORS.neutral;
 	if(n >= 0.85) return CONFIDENCE_COLORS.high;
 	if(n >= 0.6) return CONFIDENCE_COLORS.medium;
 	return CONFIDENCE_COLORS.low;
@@ -85,22 +88,27 @@ function applyConfidenceToField(elem, fieldKey, confidenceMap){
 	}
 
 	// Attach jQuery UI tooltip (already loaded). Safe: reads the title attr only.
+	// Destroy any prior tooltip widget first so re-running OCR doesn't stack
+	// duplicate tooltip instances on the same field.
 	try{
 		if(typeof $ !== "undefined" && $(elem).tooltip){
-			$(elem).tooltip({ items: "[title]", track: true });
+			var $e = $(elem);
+			if($e.data("ui-tooltip")){ $e.tooltip("destroy"); }
+			$e.tooltip({ items: "[title]", track: true });
 		}
 	}
 	catch(err){ /* tooltip not available; title attr still shows native tooltip */ }
 }
 
-// Detect the structured envelope: an object carrying a _confidence map and/or
-// at least one recognized DWC key. Plain OCR text (string) returns false.
+// Detect the structured envelope by its envelope markers (_confidence / _meta),
+// which the middleware ALWAYS emits. We deliberately do NOT treat "any object
+// with a DWC-named key" as structured: tesseract/others endpoints may return
+// JSON containing common words like "family"/"country"/"locality", and those
+// must keep the existing plain-text behavior. Plain OCR text (string) -> false.
 function isStructuredOcrEnvelope(obj){
 	if(!obj || typeof obj !== "object") return false;
 	if(obj._confidence && typeof obj._confidence === "object") return true;
-	for(var key in dwcToFormField){
-		if(Object.prototype.hasOwnProperty.call(obj, key)) return true;
-	}
+	if(obj._meta && typeof obj._meta === "object") return true;
 	return false;
 }
 
