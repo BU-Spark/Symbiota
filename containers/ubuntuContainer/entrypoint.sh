@@ -29,8 +29,31 @@ if [ -d "$CONFIG_OVERLAY_DIR" ] && [ "$(ls -A $CONFIG_OVERLAY_DIR)" ]; then
     #   - header.php, footer.php, leftmenu.php, index.php (root customizations)
     rsync -a --exclude='.git' "$CONFIG_OVERLAY_DIR"/ "$SYMBIOTA_DIR/"
 
-    # Ensure proper ownership
-    chown -R www-data:www-data "$SYMBIOTA_DIR"
+    # Avoid recursively chowning bind-mounted runtime data under rootless Podman.
+    # Host-mounted data directories should be owned by the service account on the host.
+    for path in \
+        "$SYMBIOTA_DIR/config" \
+        "$SYMBIOTA_DIR/content/lang" \
+        "$SYMBIOTA_DIR/includes" \
+        "$SYMBIOTA_DIR/header.php" \
+        "$SYMBIOTA_DIR/footer.php" \
+        "$SYMBIOTA_DIR/index.php" \
+        "$SYMBIOTA_DIR/leftmenu.php"
+    do
+        if [ -e "$path" ]; then
+            chown -R www-data:www-data "$path" || true
+        fi
+    done
+
+    for path in \
+        "$SYMBIOTA_DIR/temp" \
+        "$SYMBIOTA_DIR/content/imglib" \
+        "$SYMBIOTA_DIR/content/logs"
+    do
+        if [ -e "$path" ] && [ ! -w "$path" ]; then
+            echo "WARNING: Runtime data path is not writable by container: $path"
+        fi
+    done
 
     echo "Configuration overlay complete"
     echo ""
