@@ -809,8 +809,14 @@ EOSQL
         # legacy MySQL-PASSWORD format CONCAT('*', UPPER(SHA1(UNHEX(SHA1(...))))).
         # md5 matches neither and locks out the account silently.  Use MySQL's
         # own PASSWORD()-equivalent expression so no shell hashing is needed.
+        # Hex-encode the password before embedding it in SQL so that shell
+        # special chars ($, backticks) and SQL special chars (', \) in an
+        # operator-chosen password cannot mangle the query or abort the run.
+        # UNHEX(hex_of_pw) == password bytes, so SHA1 output is identical.
+        # od is POSIX; xxd is not.
+        _pw_hex=$(printf '%s' "$ADMIN_PASSWORD" | od -A n -t x1 | tr -d ' \n')
         $DOCKER_CMD exec symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" <<EOSQL
-UPDATE users SET password = CONCAT('*', UPPER(SHA1(UNHEX(SHA1('$ADMIN_PASSWORD'))))) WHERE username = 'admin';
+UPDATE users SET password = CONCAT('*', UPPER(SHA1(UNHEX(SHA1(UNHEX('$_pw_hex')))))) WHERE username = 'admin';
 EOSQL
 
         log_success "Admin password updated"
