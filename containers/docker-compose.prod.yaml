@@ -23,7 +23,7 @@ services:
     # ALTERNATIVE (opt-in): build from source for community deployments.
     # Comment out the `image:` line above and uncomment this block.
     # build:
-    #   context: ../..  # Repository root (two dirs up from containers/)
+    #   context: ..  # Repository root (containers/ sits directly at the repo root, so one dir up)
     #   dockerfile: containers/ubuntuContainer/Dockerfile.prod
     #   platforms:
     #     - linux/amd64
