@@ -29,11 +29,31 @@ if [ -d "$CONFIG_OVERLAY_DIR" ] && [ "$(ls -A $CONFIG_OVERLAY_DIR)" ]; then
     #   - header.php, footer.php, leftmenu.php, index.php (root customizations)
     rsync -a --exclude='.git' "$CONFIG_OVERLAY_DIR"/ "$SYMBIOTA_DIR/"
 
-    # Ensure proper ownership. Best-effort: under rootless podman with root-owned
-    # bind-mounts the container user can't chown them (files are already correctly
-    # mapped), and set -e would otherwise crash-loop the container. Same guard as
-    # the apache log/run chowns below.
-    chown -R www-data:www-data "$SYMBIOTA_DIR" 2>/dev/null || true
+    # Avoid recursively chowning bind-mounted runtime data under rootless Podman.
+    # Host-mounted data directories should be owned by the service account on the host.
+    for path in \
+        "$SYMBIOTA_DIR/config" \
+        "$SYMBIOTA_DIR/content/lang" \
+        "$SYMBIOTA_DIR/includes" \
+        "$SYMBIOTA_DIR/header.php" \
+        "$SYMBIOTA_DIR/footer.php" \
+        "$SYMBIOTA_DIR/index.php" \
+        "$SYMBIOTA_DIR/leftmenu.php"
+    do
+        if [ -e "$path" ]; then
+            chown -R www-data:www-data "$path" || true
+        fi
+    done
+
+    for path in \
+        "$SYMBIOTA_DIR/temp" \
+        "$SYMBIOTA_DIR/content/imglib" \
+        "$SYMBIOTA_DIR/content/logs"
+    do
+        if [ -e "$path" ] && [ ! -w "$path" ]; then
+            echo "WARNING: Runtime data path is not writable by container: $path"
+        fi
+    done
 
     echo "Configuration overlay complete"
     echo ""
@@ -66,19 +86,6 @@ for file in "${CRITICAL_FILES[@]}"; do
 done
 echo ""
 
-# The chown above is best-effort (swallowed under rootless podman). Probe the
-# data dirs as www-data so a swallowed failure surfaces here instead of as an
-# opaque EACCES on the first image upload / OCR run.
-echo "Checking data directory writability as www-data..."
-for d in "$SYMBIOTA_DIR/temp" "$SYMBIOTA_DIR/content/imglib" "$SYMBIOTA_DIR/content/logs"; do
-    [ -d "$d" ] || continue
-    if ! su -s /bin/sh -c "test -w '$d'" www-data 2>/dev/null; then
-        echo "  ⚠ WARNING: www-data cannot write $d — image uploads/OCR will fail (EACCES)."
-        echo "    Fix host-side ownership of the mounted dir: chown -R 33:33 <hostdir>."
-    fi
-done
-echo ""
-
 echo "Loading environment variables..."
 # Source .env file if mounted in config overlay
 # This allows deployer to place .env anywhere and mount it here
@@ -94,30 +101,13 @@ fi
 echo ""
 
 echo "Configuring Apache logging to stdout..."
-# Redirect Apache error log to stdout so podman/docker logs can capture it.
+# Redirect Apache error log to stdout so podman logs can capture it
 ln -sf /proc/self/fd/1 /var/log/apache2/error.log
 ln -sf /proc/self/fd/1 /var/log/apache2/access.log
-# Ensure the unprivileged user can write the log targets / run dirs.
-chown -h www-data:www-data /var/log/apache2/error.log /var/log/apache2/access.log 2>/dev/null || true
-chown -R www-data:www-data /var/run/apache2 /var/lock/apache2 /var/log/apache2 2>/dev/null || true
 
-echo "Starting Apache as the unprivileged www-data user..."
+echo "Starting Apache..."
 echo "========================================="
 echo ""
 
-# All the steps above (config overlay, chown, log symlinks) require root.
-# Now drop privileges so the Apache MASTER process does NOT run as root.
-# Apache listens on 8080 (a non-privileged port; see ports.conf / 002-symbiota.conf),
-# which www-data is allowed to bind. We keep PID 1 by exec-ing setpriv, which
-# itself execs apache2ctl, so signal handling / clean shutdown still work.
-#
-# Prefer setpriv (util-linux, installed in the image); fall back to gosu if
-# present; if neither exists, warn and start as root rather than fail to boot.
-if command -v setpriv >/dev/null 2>&1; then
-    exec setpriv --reuid=www-data --regid=www-data --init-groups apache2ctl -D FOREGROUND
-elif command -v gosu >/dev/null 2>&1; then
-    exec gosu www-data apache2ctl -D FOREGROUND
-else
-    echo "WARNING: neither setpriv nor gosu found; starting Apache as root (master will be root)."
-    exec apache2ctl -D FOREGROUND
-fi
+# Start Apache in foreground
+exec apache2ctl -D FOREGROUND
