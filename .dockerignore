@@ -26,6 +26,9 @@ documentation/
 # The whole containers/ tree (compose files, Dockerfiles, bootstrap scripts,
 # systemd units, env examples) is build tooling, not application code.
 containers/
+# ...except the two files Dockerfile.prod COPYs into the image (build context is repo root).
+!containers/ubuntuContainer/002-symbiota.conf
+!containers/ubuntuContainer/entrypoint.sh
 docker/
 .dockerignore
 
