@@ -742,25 +742,21 @@ function quickEntryOcrImage(ocrButton, imgidVar, imgCnt, imgURl) {
 
 				// Populate matching form fields (only empty/enabled/non-hidden) and
 				// color/tooltip each by confidence. Never clobber a human edit.
-				let scinameTransferred = false;
+				// quickentry page uses name="currName" for scientific name (not "sciname"),
+				// so fall back to that when the canonical name resolves to nothing.
 				for (const [dwcKey, formName] of Object.entries(dwcToFormField)) {
 					if (!Object.prototype.hasOwnProperty.call(decodedResponse, dwcKey)) continue;
 					let val = decodedResponse[dwcKey];
 					if (val === null || typeof val === "undefined" || val === "") continue;
 
 					let elem = document.querySelector('[name="' + formName + '"]');
+					if (!elem && formName === "sciname") elem = document.querySelector('[name="currName"]');
 					if (elem && elem.value === "" && elem.disabled === false && elem.type !== "hidden") {
 						elem.value = val;
-						if (formName === "sciname") scinameTransferred = true;
 						applyConfidenceToField(elem, dwcKey, confidenceMap);
-						if (typeof fieldChanged === "function") fieldChanged(formName);
+						if (typeof fieldChanged === "function") fieldChanged(elem.name);
 					}
 				}
-				// Resolve the taxon and trigger record-security auto-flagging for
-				// sensitive/rare taxa, matching the NLP path (pushDwcArrToForm).
-				// Programmatic .value assignment doesn't fire the autocomplete change
-				// handler, so without this a rare-taxon OCR record saves unprotected.
-				if (scinameTransferred && typeof verifyFullFormSciName === "function") verifyFullFormSciName();
 
 				// Also build a readable plain-text version for the rawtext box (reference).
 				// Only DWC value fields are included; _confidence/_meta are excluded.
