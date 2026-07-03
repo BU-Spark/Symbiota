@@ -66,6 +66,19 @@ for file in "${CRITICAL_FILES[@]}"; do
 done
 echo ""
 
+# The chown above is best-effort (swallowed under rootless podman). Probe the
+# data dirs as www-data so a swallowed failure surfaces here instead of as an
+# opaque EACCES on the first image upload / OCR run.
+echo "Checking data directory writability as www-data..."
+for d in "$SYMBIOTA_DIR/temp" "$SYMBIOTA_DIR/content/imglib" "$SYMBIOTA_DIR/content/logs"; do
+    [ -d "$d" ] || continue
+    if ! su -s /bin/sh -c "test -w '$d'" www-data 2>/dev/null; then
+        echo "  ⚠ WARNING: www-data cannot write $d — image uploads/OCR will fail (EACCES)."
+        echo "    Fix host-side ownership of the mounted dir: chown -R 33:33 <hostdir>."
+    fi
+done
+echo ""
+
 echo "Loading environment variables..."
 # Source .env file if mounted in config overlay
 # This allows deployer to place .env anywhere and mount it here
