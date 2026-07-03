@@ -560,6 +560,13 @@ setup_permissions() {
     # Data directories: least-privilege instead of world-writable 777.
     # Content/logs are written by the www-data process (owner/group): 770.
     # MySQL data dir is owned/used only by the mysqld user: 750.
+    # chown to the container runtime uids so the tighter modes still grant access
+    # (www-data=33 in the app image, mysql=999 in the db image). Under rootful
+    # docker these host uids map 1:1 into the containers; without the chown the
+    # 770/750 modes lock non-root Apache/mysqld out entirely.
+    chown -R 33:33 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not chown content directory to www-data (33)"
+    chown -R 33:33 "$LOGS_DIR" 2>/dev/null || log_warning "Could not chown logs directory to www-data (33)"
+    chown -R 999:999 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not chown MySQL data directory to mysql (999)"
     chmod -R 770 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not set permissions on content directory"
     chmod -R 770 "$LOGS_DIR" 2>/dev/null || log_warning "Could not set permissions on logs directory"
     chmod -R 750 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not set permissions on MySQL data directory"
