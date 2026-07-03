@@ -561,12 +561,22 @@ setup_permissions() {
     # Content/logs are written by the www-data process (owner/group): 770.
     # MySQL data dir is owned/used only by the mysqld user: 750.
     # chown to the container runtime uids so the tighter modes still grant access
-    # (www-data=33 in the app image, mysql=999 in the db image). Under rootful
-    # docker these host uids map 1:1 into the containers; without the chown the
-    # 770/750 modes lock non-root Apache/mysqld out entirely.
-    chown -R 33:33 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not chown content directory to www-data (33)"
-    chown -R 33:33 "$LOGS_DIR" 2>/dev/null || log_warning "Could not chown logs directory to www-data (33)"
-    chown -R 999:999 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not chown MySQL data directory to mysql (999)"
+    # (www-data=33 in the app image, mysql=999 in the db image). Only valid under
+    # rootful docker, where host uids map 1:1 into the container. Under rootless
+    # podman host uid 33 != container www-data (subuid offset), so chowning here is
+    # wrong/ineffective — that path relies on the container entrypoint's in-namespace
+    # chown instead. Also needs root to chown to another uid; if not, warn (the dirs
+    # stay owner-only and non-root Apache/mysqld will be locked out — run as root).
+    if [ "$CONTAINER_RUNTIME" = "docker" ]; then
+        if [ "$(id -u)" -ne 0 ]; then
+            log_warning "Not running as root: cannot chown data dirs to container uids; run bootstrap as root or www-data (33)/mysqld (999) will be locked out."
+        fi
+        chown -R 33:33 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not chown content directory to www-data (33)"
+        chown -R 33:33 "$LOGS_DIR" 2>/dev/null || log_warning "Could not chown logs directory to www-data (33)"
+        chown -R 999:999 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not chown MySQL data directory to mysql (999)"
+    else
+        log_info "Rootless podman: skipping host-side chown (container entrypoint handles ownership in-namespace)."
+    fi
     chmod -R 770 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not set permissions on content directory"
     chmod -R 770 "$LOGS_DIR" 2>/dev/null || log_warning "Could not set permissions on logs directory"
     chmod -R 750 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not set permissions on MySQL data directory"
