@@ -769,7 +769,32 @@ EOSQL
         local full_path="$schema_dir/$schema_file"
         if [ -f "$full_path" ]; then
             log_info "Loading: $schema_file"
+            # MySQL 8 refuses DROP INDEX on any index that backs a FK constraint
+            # even when FOREIGN_KEY_CHECKS=0 (MariaDB and MySQL 5.7 allow it).
+            # Patch 3.1 renames the three FK-backed indexes on omoccurrences, so
+            # we drop those FKs first, load the patch (which re-adds equivalent
+            # named indexes), then restore the FK constraints referencing the new
+            # index names.  This block is a no-op on MariaDB/MySQL 5.7.
+            # ponytail: targeted shim for known patch; remove if patch 3.1 is rewritten to handle this itself.
+            if [ "$schema_file" = "3.0/patches/db_schema_patch-3.1.sql" ]; then
+                log_info "Applying MySQL 8 FK compatibility shim for patch 3.1..."
+                $DOCKER_CMD exec symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" <<'EOSQL'
+ALTER TABLE `omoccurrences`
+  DROP FOREIGN KEY `FK_omoccurrences_collid`,
+  DROP FOREIGN KEY `FK_omoccurrences_tid`,
+  DROP FOREIGN KEY `FK_omoccurrences_uid`;
+EOSQL
+            fi
             $DOCKER_CMD exec -i symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" < "$full_path"
+            if [ "$schema_file" = "3.0/patches/db_schema_patch-3.1.sql" ]; then
+                $DOCKER_CMD exec symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" <<'EOSQL'
+ALTER TABLE `omoccurrences`
+  ADD CONSTRAINT `FK_omoccurrences_collid` FOREIGN KEY (`collid`) REFERENCES `omcollections` (`CollID`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `FK_omoccurrences_tid` FOREIGN KEY (`tidInterpreted`) REFERENCES `taxa` (`tid`) ON DELETE SET NULL ON UPDATE CASCADE,
+  ADD CONSTRAINT `FK_omoccurrences_uid` FOREIGN KEY (`observerUid`) REFERENCES `users` (`uid`);
+EOSQL
+                log_info "FK constraints restored after patch 3.1"
+            fi
         else
             log_warning "Schema file not found: $schema_file"
         fi
@@ -780,10 +805,12 @@ EOSQL
     # Change default admin password if provided
     if [ -n "$ADMIN_PASSWORD" ]; then
         log_info "Updating admin password..."
-        local hashed_password=$(echo -n "$ADMIN_PASSWORD" | md5sum | cut -d' ' -f1)
-
+        # ProfileManager.php verifies passwords only as bcrypt ($2y$) or the
+        # legacy MySQL-PASSWORD format CONCAT('*', UPPER(SHA1(UNHEX(SHA1(...))))).
+        # md5 matches neither and locks out the account silently.  Use MySQL's
+        # own PASSWORD()-equivalent expression so no shell hashing is needed.
         $DOCKER_CMD exec symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" <<EOSQL
-UPDATE users SET password = '$hashed_password' WHERE username = 'admin';
+UPDATE users SET password = CONCAT('*', UPPER(SHA1(UNHEX(SHA1('$ADMIN_PASSWORD'))))) WHERE username = 'admin';
 EOSQL
 
         log_success "Admin password updated"
