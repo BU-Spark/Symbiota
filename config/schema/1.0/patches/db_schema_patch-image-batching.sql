@@ -1,4 +1,3 @@
-INSERT IGNORE INTO schemaversion (versionnumber) values ("image-batching-patch");
 
 -- NOTE: The core `batch` table has been split out into
 -- db_schema_patch-batch-core.sql. Apply batch-core FIRST: the tables below
@@ -43,3 +42,6 @@ CREATE TABLE IF NOT EXISTS `images_barcode` (
   CONSTRAINT `FK_images_barcode_images` FOREIGN KEY (`imgid`) REFERENCES `media` (`mediaID`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `FK_images_barcode_omoccurrences` FOREIGN KEY (`occid`) REFERENCES `omoccurrences` (`occid`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- Record patch as applied only after all statements above succeed (see fix 049d77172 for 3.1).
+INSERT IGNORE INTO schemaversion (versionnumber) values ("image-batching-patch");

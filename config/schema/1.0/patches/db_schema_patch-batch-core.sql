@@ -1,4 +1,3 @@
-INSERT IGNORE INTO schemaversion (versionnumber) values ("batch-core-patch");
 
 -- Core `batch` table, shared by the image-batching and ai-transcription features.
 -- Split out of db_schema_patch-image-batching.sql so that any feature whose tables
@@ -16,3 +15,6 @@ CREATE TABLE IF NOT EXISTS `batch` (
   `collID` int(11) NOT NULL,
   PRIMARY KEY (`batchID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- Record patch as applied only after all statements above succeed (see fix 049d77172 for 3.1).
+INSERT IGNORE INTO schemaversion (versionnumber) values ("batch-core-patch");

@@ -1,4 +1,3 @@
-INSERT IGNORE INTO schemaversion (versionnumber) values ("portal-mysql57-compat-patch");
 
 -- Portal compatibility fixes for MySQL 5.7 / STRICT_TRANS_TABLES SQL_MODE.
 --
@@ -25,3 +24,6 @@ ALTER TABLE `omoccurdeterminations`
 ALTER TABLE `mediametadata`
   MODIFY COLUMN `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   MODIFY COLUMN `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP;
+
+-- Record patch as applied only after all statements above succeed (see fix 049d77172 for 3.1).
+INSERT IGNORE INTO schemaversion (versionnumber) values ("portal-mysql57-compat-patch");

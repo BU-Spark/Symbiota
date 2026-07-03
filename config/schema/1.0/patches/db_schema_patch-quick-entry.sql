@@ -1,4 +1,3 @@
-INSERT IGNORE INTO schemaversion (versionnumber) values ("quick-entry-patch");
 
 -- Add missing columns to the omoccurrences table where the quick entry data is stored.
 -- Guarded per-column ADD so re-runs are idempotent on MySQL 5.7 AND 8.0
@@ -73,3 +72,6 @@ PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='omoccurrences' AND COLUMN_NAME='method');
 SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `method` varchar(255) DEFAULT NULL");
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- Record patch as applied only after all statements above succeed (see fix 049d77172 for 3.1).
+INSERT IGNORE INTO schemaversion (versionnumber) values ("quick-entry-patch");
