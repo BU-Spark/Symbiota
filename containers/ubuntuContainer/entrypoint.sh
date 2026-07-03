@@ -29,8 +29,11 @@ if [ -d "$CONFIG_OVERLAY_DIR" ] && [ "$(ls -A $CONFIG_OVERLAY_DIR)" ]; then
     #   - header.php, footer.php, leftmenu.php, index.php (root customizations)
     rsync -a --exclude='.git' "$CONFIG_OVERLAY_DIR"/ "$SYMBIOTA_DIR/"
 
-    # Ensure proper ownership
-    chown -R www-data:www-data "$SYMBIOTA_DIR"
+    # Ensure proper ownership. Best-effort: under rootless podman with root-owned
+    # bind-mounts the container user can't chown them (files are already correctly
+    # mapped), and set -e would otherwise crash-loop the container. Same guard as
+    # the apache log/run chowns below.
+    chown -R www-data:www-data "$SYMBIOTA_DIR" 2>/dev/null || true
 
     echo "Configuration overlay complete"
     echo ""
