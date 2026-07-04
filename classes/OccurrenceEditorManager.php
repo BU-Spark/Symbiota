@@ -1302,7 +1302,9 @@ class OccurrenceEditorManager {
 			// OCR is run to read the label before the record exists. Resolve the
 			// collection via its batch so CollEditors aren't locked out of OCR.
 			if ($collId === null) {
-				$sql2 = 'SELECT b.collID FROM batch_XREF bx INNER JOIN batch b ON b.batchID = bx.batchID WHERE bx.imgid = ? LIMIT 1';
+				// ORDER BY keeps the resolved collection deterministic if an image is
+			// cross-referenced in more than one batch (batch_XREF PK is imgid+batchID).
+			$sql2 = 'SELECT b.collID FROM batch_XREF bx INNER JOIN batch b ON b.batchID = bx.batchID WHERE bx.imgid = ? ORDER BY bx.batchID LIMIT 1';
 				if ($stmt2 = $this->conn->prepare($sql2)) {
 					$stmt2->bind_param('i', $mid);
 					$stmt2->execute();
