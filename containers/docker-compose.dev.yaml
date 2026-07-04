@@ -3,6 +3,8 @@
 # For local development with live code editing
 # Uses bind mounts for instant code changes without rebuild
 
+version: '3.8'
+
 services:
   symbiota:
     build:
@@ -10,23 +12,18 @@ services:
       dockerfile: Dockerfile
     container_name: symbiota-web-dev
     ports:
-      # Apache listens on 8080 inside the container (non-root); publish to host.
-      - "${HTTP_PORT:-8080}:8080"
+      - "${HTTP_PORT:-8080}:80"
     volumes:
       # Bind mount code for live editing
-      - ${PROJECT_ROOT:-..}:/var/www/html/symbiota${SELINUX_FLAG}
-      # Config overlay mount — PROD only. The dev image runs apache2ctl directly and has
-      # no entrypoint that reads /config-overlay (see ubuntuContainer/Dockerfile), so this
-      # mount is a harmless no-op in dev. CONFIG_OVERLAY_DIR (runtime overlay source) is a
-      # SEPARATE variable from CONFIG_DIR (the prod build-arg in the Makefile) — finding B3.
+      - ${PROJECT_ROOT:-./../..}:/var/www/html/symbiota${SELINUX_FLAG}
+      # Config overlay (optional, sourced by entrypoint if .env present)
       - ${CONFIG_OVERLAY_DIR:-./containers}/.env:/config-overlay/.env:ro${SELINUX_FLAG}
       # Separate data directories (on different filesystem for large datasets)
       # Uncomment these if using bootstrap-symbiota.sh or separate storage
       # - ${CONTENT_DIR}:/var/www/html/symbiota/content${SELINUX_FLAG}
       # - ${LOGS_DIR}:/var/www/html/symbiota/content/logs${SELINUX_FLAG}
     depends_on:
-      symbiota-db:
-        condition: service_healthy
+      - symbiota-db
     networks:
       - symbiota-network
     environment:
@@ -39,14 +36,12 @@ services:
       dockerfile: Dockerfile
     container_name: symbiota-db-dev
     environment:
-      # Fail fast if .env is missing rather than silently using weak defaults.
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-symbiota}
-      MYSQL_USER: ${MYSQL_USER:?set in .env}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+      MYSQL_USER: ${MYSQL_USER:-symbiota-user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-symbiota-pass}
     ports:
-      # Bind to loopback only so the dev DB is not exposed on all interfaces.
-      - "127.0.0.1:${MYSQL_PORT:-33060}:3306"
+      - "${MYSQL_PORT:-33060}:3306"
     volumes:
       # Persistent database storage (use bind mount if data on separate filesystem)
       - ${MYSQL_DATA_DIR:-mysql-data}:/var/lib/mysql${SELINUX_FLAG}
@@ -55,12 +50,6 @@ services:
     networks:
       - symbiota-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
 volumes:
   mysql-data:
