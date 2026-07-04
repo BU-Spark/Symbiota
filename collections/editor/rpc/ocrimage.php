@@ -29,7 +29,7 @@ $y = (array_key_exists('y', $_REQUEST) && is_numeric($_REQUEST['y'])) ? $_REQUES
 $w = (array_key_exists('w', $_REQUEST) && is_numeric($_REQUEST['w'])) ? $_REQUEST['w'] : 1;
 $h = (array_key_exists('h', $_REQUEST) && is_numeric($_REQUEST['h'])) ? $_REQUEST['h'] : 1;
 $ocrBest = array_key_exists('ocrbest', $_REQUEST) ? filter_var($_REQUEST['ocrbest'], FILTER_SANITIZE_NUMBER_INT) : 0;
-$target = (array_key_exists('target', $_REQUEST) && in_array($_REQUEST['target'], array('tesseract','google','external','others'), true)) ? $_REQUEST['target'] : 'tesseract';
+$target = (array_key_exists('target', $_REQUEST) && in_array($_REQUEST['target'], array('tesseract','google','external','digi','others'), true)) ? $_REQUEST['target'] : 'tesseract';
 
 $rawStr = '';
 $ocrManager = new SpecProcessorOcr();

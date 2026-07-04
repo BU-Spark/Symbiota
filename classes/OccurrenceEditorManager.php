@@ -1297,6 +1297,22 @@ class OccurrenceEditorManager {
 				}
 				$stmt->close();
 			}
+			// Fallback: a fresh batch image isn't linked to an occurrence yet
+			// (media.occid IS NULL) — the normal state during transcription, when
+			// OCR is run to read the label before the record exists. Resolve the
+			// collection via its batch so CollEditors aren't locked out of OCR.
+			if ($collId === null) {
+				$sql2 = 'SELECT b.collID FROM batch_XREF bx INNER JOIN batch b ON b.batchID = bx.batchID WHERE bx.imgid = ? LIMIT 1';
+				if ($stmt2 = $this->conn->prepare($sql2)) {
+					$stmt2->bind_param('i', $mid);
+					$stmt2->execute();
+					$stmt2->bind_result($batchCollId);
+					if ($stmt2->fetch()) {
+						$collId = $batchCollId;
+					}
+					$stmt2->close();
+				}
+			}
 		}
 		return $collId;
 	}

@@ -574,6 +574,12 @@ setup_permissions() {
         chown -R 33:33 "$CONTENT_DIR" 2>/dev/null || log_warning "Could not chown content directory to www-data (33)"
         chown -R 33:33 "$LOGS_DIR" 2>/dev/null || log_warning "Could not chown logs directory to www-data (33)"
         chown -R 999:999 "$MYSQL_DATA_DIR" 2>/dev/null || log_warning "Could not chown MySQL data directory to mysql (999)"
+        # CODE_DIR writable subdirs (temp, api storage) are 770 too — chown to
+        # www-data or the container's PHP/API process can't write them (temp files,
+        # Laravel storage/framework cache), unlike the old world-writable 777.
+        for wd in temp api/storage/framework api/storage/logs; do
+            [ -d "$CODE_DIR/$wd" ] && { chown -R 33:33 "$CODE_DIR/$wd" 2>/dev/null || log_warning "Could not chown $wd to www-data (33)"; }
+        done
     else
         log_info "Rootless podman: skipping host-side chown (container entrypoint handles ownership in-namespace)."
     fi
