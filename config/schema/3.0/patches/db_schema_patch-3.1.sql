@@ -1,7 +1,6 @@
--- E2 fix: the version row is recorded at the END of this patch (see bottom of file),
--- not here — so a failure in any DDL below cannot leave a false "3.1 applied" marker.
+INSERT INTO `schemaversion` (versionnumber) values ("3.1");
 
-ALTER TABLE `ctcontrolvocab`
+ALTER TABLE `ctcontrolvocab` 
   ADD COLUMN `filterVariable` VARCHAR(150) NOT NULL DEFAULT '' AFTER `fieldName`,
   DROP INDEX `UQ_ctControlVocab`;
 
@@ -283,9 +282,4 @@ CREATE TABLE `usersthirdpartyauth` (
 # Deprecate omoccurresource table in preference for omoccurassociations. 
 ALTER TABLE `omoccurresource` 
   RENAME TO  `deprecated_omoccurresource` ;
-
-
--- E2 fix: record the schema version LAST. If any statement above fails, the CLI stops
--- before this runs, so `schemaversion` will NOT falsely report 3.1 as applied.
-INSERT INTO `schemaversion` (versionnumber) values ("3.1");
 

@@ -246,8 +246,9 @@ ALTER TABLE `omexportoccurrences`
 
 
 #Add update to omoccurdeterminations.dateLastModified tracked any update to the row
+# (explicit NULL for SQL_MODE with STRICT_TRANS_TABLES / MySQL 5.7)
 ALTER TABLE omoccurdeterminations 
-  MODIFY COLUMN dateLastModified timestamp DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP;
+  MODIFY COLUMN dateLastModified timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP;
 
 #Convert locus and notes fields within genetic table to TEXT
 ALTER TABLE `omoccurgenetic` 
@@ -676,8 +677,8 @@ CREATE TABLE mediametadata (
   field enum ('originalUrl', 'thumbnailUrl', 'url') NOT NULL,
   bytes BIGINT UNSIGNED NOT NULL,
   md5sum varchar(32) NOT NULL,
-  created_at timestamp DEFAULT current_timestamp(),
-  updated_at timestamp DEFAULT NULL ON UPDATE current_timestamp(),
+  created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (mediaID, field),
   FOREIGN KEY (mediaID) REFERENCES media(mediaID) ON DELETE CASCADE
 ) ENGINE=INNODB;
