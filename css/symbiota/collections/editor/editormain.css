@@ -403,3 +403,6 @@ form label:has(+ input[required]):after {
 	color: red;
 	content: '*';
 }
+
+/* ML confidence CSS lives in quickentry.css — that is the only page where
+   applyConfidenceToField() runs (via quickEntryOcrImage). */

@@ -495,6 +495,64 @@ class RpcOccurrenceEditor extends RpcBase{
 		return $tableStr;
 	}
 
+	// Quick-entry autocomplete suggestions. Each returns DISTINCT non-empty values from an
+	// omoccurrences column matching the prefix term. Parameterized to prevent SQL injection.
+	private function getColumnSuggest($column, $term){
+		$retArr = array();
+		// Whitelist of allowed columns (column name cannot be parameterized).
+		$allowed = array('currName', 'filedUnder', 'collTrip', 'geoWithin', 'highGeo', 'identifiedby', 'recordedby');
+		if(!in_array($column, $allowed, true)) return $retArr;
+		if($term === null || $term === '') return $retArr;
+		$sql = 'SELECT DISTINCT `' . $column . '` AS val FROM omoccurrences '
+			. 'WHERE `' . $column . '` LIKE CONCAT(?, "%") AND `' . $column . '` IS NOT NULL AND `' . $column . '` != "" '
+			. 'ORDER BY `' . $column . '` LIMIT 25';
+		if($stmt = $this->conn->prepare($sql)){
+			$stmt->bind_param('s', $term);
+			$stmt->execute();
+			$stmt->bind_result($val);
+			while($stmt->fetch()){
+				$retArr[] = $val;
+			}
+			$stmt->close();
+		}
+		return $retArr;
+	}
+
+	//Used by /collections/quickentry/rpc/getcurrnamesuggest.php
+	public function getCurrNameSuggest($term){
+		return $this->getColumnSuggest('currName', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/getfiledundersuggest.php
+	public function getFiledUnderSuggest($term){
+		return $this->getColumnSuggest('filedUnder', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/getcolltripsuggest.php
+	public function getCollTripSuggest($term){
+		return $this->getColumnSuggest('collTrip', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/getgeowithnsuggest.php
+	public function getGeoWithinSuggest($term){
+		return $this->getColumnSuggest('geoWithin', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/gethighgeosuggest.php
+	public function getHighGeoSuggest($term){
+		return $this->getColumnSuggest('highGeo', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/getidentifiedbysuggest.php
+	public function getIdentifedBySuggest($term){
+		return $this->getColumnSuggest('identifiedby', $term);
+	}
+
+	//Used by /collections/quickentry/rpc/getrecordedbysuggest.php
+	public function getRecordedBySuggest($term){
+		return $this->getColumnSuggest('recordedby', $term);
+	}
+
 	//Setters and getters
 	public function isValidApiCall(){
 		//Verification also happening within haddler checking is user is logged in and a valid admin/editor
