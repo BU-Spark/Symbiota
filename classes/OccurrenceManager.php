@@ -294,14 +294,23 @@ class OccurrenceManager extends OccurrenceTaxaManager {
 			else{
 				$singleWordArr = array();
 				foreach($collectorArr as $value){
-					$value = $this->cleanInStr(str_replace(array('"', '+', '%'), '', $value));
+					$value = $this->cleanInStr(str_replace(array('"', '+'), '', $value));
 					if($value == 'NULL'){
 						$tempCollSqlArr[] = '(o.recordedby IS NULL)';
 						$tempCollTextArr[] = 'Collector IS NULL';
 					}
 					else{
 						if(strpos($value, ' ')){
-							$tempCollSqlArr[] = '(MATCH(o.recordedby) AGAINST("+'.str_replace(' ', ' +', $value).'" IN BOOLEAN MODE) AND o.recordedby LIKE "%'.$value.'%")';
+							$againstValueArr = explode(' ', $value);
+							foreach($againstValueArr as $k => $v){
+								if(!$v || strpos($v, '.') || strlen($v) < $this->fullTextMinTokenLength) unset($againstValueArr[$k]);
+							}
+							if($againstValueArr){
+								$tempCollSqlArr[] = '(MATCH(o.recordedby) AGAINST("+' . implode(' +', $againstValueArr) . '" IN BOOLEAN MODE) AND o.recordedby LIKE "%' . $value . '%")';
+							}
+							else{
+								$tempSqlArr[] = '(o.recordedby LIKE "%' . $value . '%")';
+							}
 						}
 						else{
 							if(strlen($value) < 3) $singleWordArr['sm'][] = $value;
@@ -633,6 +642,15 @@ class OccurrenceManager extends OccurrenceTaxaManager {
 		}
 	}
 
+	protected function getGeoJsonBoundingBoxWhere() {
+		if(!empty($this->searchTermArr['footprintGeoJson'])) {
+			$geoJson = $this->searchTermArr['footprintGeoJson'];
+			return " AND (MBRCONTAINS(ST_GeomFromGeoJSON('" . $geoJson . "'), p.lngLatPoint)) ";
+		}
+
+		return '';
+	}
+
 	protected function setPaleoSqlWith() {
 		$paleoSqlWith = '';
 		if (array_key_exists("earlyInterval",$this->searchTermArr) || array_key_exists("lateInterval",$this->searchTermArr)) {
@@ -906,11 +924,7 @@ class OccurrenceManager extends OccurrenceTaxaManager {
 			if($v) $retStr .= '&'. $this->cleanOutStr($k) . '=' . $this->cleanOutStr($v);
 		}
 		if(isset($this->taxaArr['search'])){
-			$patternTaxonChars = '/^[a-zA-Z0-9\s\-\,\.\(\)\'×†]*$/';
-			$taxonSearchTerm = $this->getTaxaSearchTerm();
-			if (preg_match($patternTaxonChars, $taxonSearchTerm)==1) {
-				$retStr .= '&taxa=' . $taxonSearchTerm;
-			}
+			$retStr .= '&taxa=' . $this->getTaxaSearchTerm();
 			if($this->taxaArr['usethes']) $retStr .= '&usethes=1';
 			if(is_numeric($this->taxaArr['taxontype'])) {
 				$retStr .= '&taxontype=' . intval($this->taxaArr['taxontype']);
@@ -1128,7 +1142,7 @@ class OccurrenceManager extends OccurrenceTaxaManager {
 		}
 		if(array_key_exists('collector',$_REQUEST)){
 			$collector = $this->cleanInputStr($_REQUEST['collector']);
-			$collector = str_replace('%', '', $collector);
+			//$collector = str_replace('%', '', $collector);
 			if($collector){
 				$str = str_replace(',',';',$collector);
 				$this->searchTermArr['collector'] = $str;
