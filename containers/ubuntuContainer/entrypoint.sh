@@ -19,15 +19,41 @@ if [ -d "$CONFIG_OVERLAY_DIR" ] && [ "$(ls -A $CONFIG_OVERLAY_DIR)" ]; then
     echo "Config overlay found at $CONFIG_OVERLAY_DIR"
     echo "Overlaying configuration onto $SYMBIOTA_DIR..."
 
-    # Copy config overlay, preserving structure and overwriting existing files
-    # Exclude .git directory to reduce noise and improve performance
+    # Copy config overlay, preserving structure and overwriting existing files.
     # This overlays:
     #   - config/dbconnection.php (database credentials)
     #   - config/symbini.php (main config)
     #   - content/* (site content and skin)
     #   - includes/* (custom headers)
     #   - header.php, footer.php, leftmenu.php, index.php (root customizations)
-    rsync -a --exclude='.git' "$CONFIG_OVERLAY_DIR"/ "$SYMBIOTA_DIR/"
+    #
+    # The overlay directory is a whole git checkout of the private config repo,
+    # not just that payload. Everything it contains lands in the Apache
+    # DocumentRoot and is served. Measured on the running alpha instance:
+    #   GET /.env                           -> 200, MYSQL_ROOT_PASSWORD + rw/ro
+    #   GET /containers/.env.alpha          -> 200, same
+    #   GET /containers/docker-compose.yaml -> 200
+    # (Cloudflare Access happened to gate the hostname, so it was not publicly
+    # reachable -- but the credentials were sitting in the web root behind a
+    # single control.)
+    #
+    # `.env` is NOT needed here: it is sourced further down from
+    # $CONFIG_OVERLAY_DIR/.env, which compose mounts as its own file. Excluding
+    # it from the rsync does not affect environment loading.
+    #
+    # Deliberately NOT excluding *.sql -- config/schema/**.sql is legitimate
+    # overlay payload and Symbiota's schema manager reads it.
+    rsync -a \
+        --exclude='.git' \
+        --exclude='.github' \
+        --exclude='.gitignore' \
+        --exclude='.env' \
+        --exclude='.env.*' \
+        --exclude='containers/' \
+        --exclude='docker/' \
+        --exclude='scripts/' \
+        --exclude='*.md' \
+        "$CONFIG_OVERLAY_DIR"/ "$SYMBIOTA_DIR/"
 
     # Avoid recursively chowning bind-mounted runtime data under rootless Podman.
     # Host-mounted data directories should be owned by the service account on the host.
