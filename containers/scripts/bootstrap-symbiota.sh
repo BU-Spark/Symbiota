@@ -763,6 +763,11 @@ EOSQL
         "3.0/patches/db_schema_patch-3.2.sql"
         "3.0/patches/db_schema_patch-3.3.sql"
         "3.0/patches/db_schema_patch-3.4.sql"
+        # MUST precede the feature patches below. schemaversion.versionnumber is
+        # varchar(20), and three of those patches record names longer than that,
+        # which INSERT IGNORE silently truncates. Widening first is what makes
+        # their names record correctly; run it after them and they truncate again.
+        "1.0/patches/db_schema_patch-schemaversion-width.sql"
         "1.0/patches/db_schema_patch-batch-core.sql"
         "1.0/patches/db_schema_patch-image-batching.sql"
         "1.0/patches/db_schema_patch-batch-ingestion.sql"
