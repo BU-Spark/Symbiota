@@ -10,7 +10,9 @@ SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `filedUnder` va
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='omoccurrences' AND COLUMN_NAME='geoWithin');
-SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `geoWithin` varchar(255) DEFAULT NULL");
+-- Keep this unbounded location hierarchy off-page. omoccurrences is already
+-- near InnoDB's maximum row size after the 3.4 and feature patch chain.
+SET @s := IF(@c>0,'DO 0',"ALTER TABLE `omoccurrences` ADD COLUMN `geoWithin` text DEFAULT NULL");
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='omoccurrences' AND COLUMN_NAME='herbarium');
