@@ -80,14 +80,22 @@ class LocalStorage extends StorageStrategy {
 		$this->path = $path ?? '';
 	}
 
-	private function strip_media_path_info(string $filepath) {
-		if(str_contains($filepath, $GLOBALS['MEDIA_ROOT_PATH'])) {
-			$filepath = str_replace($GLOBALS['MEDIA_ROOT_URL'], '', $filepath);
-		} else if(str_contains($filepath, $GLOBALS['MEDIA_ROOT_URL'])) {
-			$filepath = str_replace($GLOBALS['MEDIA_ROOT_URL'], '', $filepath);
+	private function strip_media_path_info(string $filepath): string {
+		foreach([$GLOBALS['MEDIA_ROOT_PATH'], $GLOBALS['MEDIA_ROOT_URL']] as $root) {
+			$root = rtrim($root, '/');
+			if($root && ($filepath === $root || str_starts_with($filepath, $root . '/'))) {
+				$filepath = substr($filepath, strlen($root));
+				break;
+			}
 		}
 
-		return $filepath;
+		$filepath = ltrim($filepath, '/');
+		$storage_path = trim($this->path, '/');
+		if($storage_path && ($filepath === $storage_path || str_starts_with($filepath, $storage_path . '/'))) {
+			$filepath = substr($filepath, strlen($storage_path));
+		}
+
+		return ltrim($filepath, '/');
 	}
 
 	public function getDirPath($file = ''): String {
@@ -209,9 +217,6 @@ class LocalStorage extends StorageStrategy {
 	}
 
 	public function rename(String $filepath, String $new_filepath): void {
-		//Remove MEDIA_ROOT_PATH + Path from filepath if it exists
-		global $SERVER_ROOT;
-
 		$old_file = pathinfo($filepath);
 		$new_file = pathinfo($new_filepath);
 
@@ -219,17 +224,16 @@ class LocalStorage extends StorageStrategy {
 			throw new MediaException(MediaException::IllegalRenameChangedFileType);
 		}
 
-		$dir_path = $this->getDirPath() . $this->path;
-		$filepath = str_replace($dir_path, '', $GLOBALS['SERVER_ROOT'] . $filepath);
-		$new_filepath = str_replace($dir_path, '', $GLOBALS['SERVER_ROOT'] . $new_filepath);
+		$filepath = $this->getDirPath($filepath);
+		$new_filepath = $this->getDirPath($new_filepath);
 
 		//Constrain Rename to Scope of MEDIA_ROOT_PATH + Storage Path
-		if($this->file_exists($new_filepath)) {
+		if(file_exists($new_filepath)) {
 			throw new MediaException(MediaException::FileAlreadyExists);
-		} else if(!$this->file_exists($filepath)) {
+		} else if(!file_exists($filepath)) {
 			throw new MediaException(MediaException::FileDoesNotExist);
 		} else {
-			rename($dir_path . $filepath, $dir_path . $new_filepath);
+			rename($filepath, $new_filepath);
 		}
 	}
 }

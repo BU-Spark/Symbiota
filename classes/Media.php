@@ -588,7 +588,7 @@ class Media {
 					$width = $size[0];
 					$height = $size[1];
 
-					$urls = [ 
+					$urls = [
 						'thumbnailUrl' => [
 							'name' => self::addToFilename($file['name'], '_tn'),
 							'width' => $GLOBALS['IMG_TN_WIDTH']?? 200,
@@ -1512,4 +1512,3 @@ class Media {
 		mysqli_commit($conn);
 	}
 }
-
