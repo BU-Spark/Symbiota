@@ -10,7 +10,7 @@ header('Content-Type: text/html; charset=' . $CHARSET);
 $collid = isset($_REQUEST['collid']) ? filter_var($_REQUEST['collid'], FILTER_SANITIZE_NUMBER_INT) : 0;
 $action = isset($_POST['formsubmit']) ? $_POST['formsubmit'] : '';
 $cSet = isset($_POST['cset']) ? $_POST['cset'] : '';
-$backupFile = isset($_REQUEST['bufile']) ? $_REQUEST['bufile'] : '';
+$backupFile = isset($_REQUEST['bufile']) && is_string($_REQUEST['bufile']) ? basename($_REQUEST['bufile']) : '';
 
 $isEditor = 0;
 if($IS_ADMIN){
@@ -20,7 +20,7 @@ elseif($collid && isset($USER_RIGHTS['CollAdmin']) && in_array($collid, $USER_RI
 	$isEditor = 1;
 }
 if($isEditor){
-	if(preg_match('/_backup_\d{4}-\d{2}-\d{2}_\d{6}_DwC-A\.zip$/', $backupFile)){
+	if(preg_match('/^[^\\/]+_backup_\d{4}-\d{2}-\d{2}_\d{6}_DwC-A\.zip$/D', $backupFile)){
 		$dwcaHandler = new DwcArchiverCore();
 		$path = $dwcaHandler->getTargetPath();
 		$archiveFile = $path . $backupFile;

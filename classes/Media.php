@@ -516,6 +516,7 @@ class Media {
 	**/
 	public static function uploadAndInsert($post_arr, $file, $storage): void {
 		$createdFilepaths = [];
+		$temporaryFilepaths = [];
 
 		$conn = Database::connect('write');
 		mysqli_begin_transaction($conn);
@@ -528,7 +529,7 @@ class Media {
 				$file['full_path'] = $file['name'];
 			} else if($post_arr['copytoserver'] ?? false) {
 				$file = UploadUtil::downloadFromRemote($post_arr['originalUrl'], $GLOBALS['ALLOWED_MEDIA_MIME_TYPES']);
-				$createdFilepaths[] = $file['tmp_name'];
+				$temporaryFilepaths[] = $file['tmp_name'];
 			}
 
 			if(self::isValidFile($file)) {
@@ -649,8 +650,11 @@ class Media {
 		} catch(Throwable $th) {
 			mysqli_rollback($conn);
 
-			foreach($createdFilepaths as $field => $filepath) {
+			foreach($createdFilepaths as $filepath) {
 				$storage->remove($filepath);
+			}
+			foreach($temporaryFilepaths as $filepath) {
+				if(file_exists($filepath)) unlink($filepath);
 			}
 
 			array_push(self::$errors, $th->getMessage());
