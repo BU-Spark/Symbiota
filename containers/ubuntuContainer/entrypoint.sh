@@ -43,7 +43,7 @@ if [ -d "$CONFIG_OVERLAY_DIR" ] && [ "$(ls -A $CONFIG_OVERLAY_DIR)" ]; then
     #
     # Deliberately NOT excluding *.sql -- config/schema/**.sql is legitimate
     # overlay payload and Symbiota's schema manager reads it.
-    rsync -a \
+    rsync -a --safe-links \
         --exclude='.git' \
         --exclude='.github' \
         --exclude='.gitignore' \
