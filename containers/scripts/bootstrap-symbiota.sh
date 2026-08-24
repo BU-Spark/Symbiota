@@ -759,6 +759,11 @@ EOSQL
     # warns instead of aborting the bootstrap.
     local schema_files=(
         "3.0/db_schema-3.0.sql"
+        # db_schema-3.0.sql SOURCEs data/geothesaurus.sql itself, so that one must
+        # NOT be listed here -- loading it twice is a duplicate-key error. The
+        # bugfix companion is different: nothing sources it, so it needs its own
+        # entry, and it must come straight after the base data it corrects.
+        "3.0/data/geothesaurus_bugfix.sql"
         "3.0/patches/db_schema_patch-3.1.sql"
         "3.0/patches/db_schema_patch-3.2.sql"
         "3.0/patches/db_schema_patch-3.3.sql"
@@ -775,6 +780,50 @@ EOSQL
         "1.0/patches/db_schema_patch-quick-entry.sql"
         "1.0/patches/db_schema_patch-portal-mysql57-compat.sql"
     )
+
+    # Upstream patches 3.1 and 3.2 deliberately contain statements that fail on a
+    # database built from db_schema-3.0.sql. Their own comments say so:
+    #   "Skip if 3.0 install: Table does not exist within db_schema-3.0, thus
+    #    statement is expected to fail if this was not originally a 1.0 install"
+    # They rename 1.0-era tables that a 3.0 install never had. There are exactly
+    # three, all `ALTER TABLE ... RENAME TO`, all reported as ERROR 1146.
+    #
+    # These two files MUST be loaded with `--force`. Without it the mysql client
+    # stops at the first error and silently discards the rest of the file -- and
+    # in patch 3.2 the declared-optional statement is at line 276 of ~700, so
+    # everything after it is lost, including `CREATE TABLE uploadkeyvaluetemp` at
+    # line 629 which patch 3.3 then depends on. (Found exactly that way: 3.3
+    # failed with "Table 'uploadkeyvaluetemp' doesn't exist".)
+    #
+    # `--force` alone would be unsafe, because it ignores EVERY error and turns a
+    # genuine migration failure into a silent half-migration. So the two are
+    # combined: --force to guarantee the whole file executes, then the collected
+    # stderr is compared against this exact allowlist, and ANY error not on it
+    # aborts the bootstrap. Only these three table names, only as ERROR 1146,
+    # only in these two files.
+    local expected_missing_tables="omoccurresource taxaprofilepubimagelink imageprojectlink"
+
+    # Returns 0 only if every error line in $1 is an ERROR 1146 for a table on
+    # the allowlist above.
+    only_expected_1146_errors() {
+        local errfile="$1" line tbl
+        # No error lines at all -> nothing to forgive.
+        grep -q '^ERROR ' "$errfile" || return 0
+        while IFS= read -r line; do
+            case "$line" in
+                *"ERROR 1146"*) ;;
+                *) return 1 ;;   # any other error is real
+            esac
+            # Extract the table name from "Table 'db.name' doesn't exist"
+            tbl=$(printf '%s\n' "$line" | sed -n "s/.*Table '[^.]*\.\([^']*\)' doesn't exist.*/\1/p")
+            [ -n "$tbl" ] || return 1
+            case " $expected_missing_tables " in
+                *" $tbl "*) ;;
+                *) return 1 ;;
+            esac
+        done < <(grep '^ERROR ' "$errfile")
+        return 0
+    }
 
     for schema_file in "${schema_files[@]}"; do
         local full_path="$schema_dir/$schema_file"
@@ -796,7 +845,81 @@ ALTER TABLE `omoccurrences`
   DROP FOREIGN KEY `FK_omoccurrences_uid`;
 EOSQL
             fi
-            $DOCKER_CMD exec -i symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" < "$full_path"
+            # The base schema uses `SOURCE data/geothesaurus.sql`, which the mysql
+            # client resolves relative to ITS OWN working directory, not the
+            # script's location. Run it from the file's directory so that line
+            # works. Without this the reference data silently never loads --
+            # geographicthesaurus ends up empty and every geography lookup in the
+            # portal comes back blank.
+            # $CODE_DIR/config/schema is bind-mounted at /schema in the temp
+            # container (see the compose file above), so the client's cwd can be
+            # set to the file's own directory inside the container.
+            local err_log
+            err_log=$(mktemp)
+            local load_rc=0
+
+            # Upstream declares swap_wkt_coords with no routine characteristic.
+            # MySQL refuses to create it when binary logging is on (ERROR 1418),
+            # which is the default for MySQL 8, and the failure cascades: a later
+            # UPDATE in the same file calls the function (ERROR 1305).
+            #
+            # The body only inspects and rebuilds its argument string -- no SQL,
+            # same output for the same input -- so DETERMINISTIC and NO SQL are
+            # both accurate. Injected with sed at load time, immediately after the
+            # RETURNS clause, so upstream's function body is used byte-for-byte
+            # and this file stays identical to upstream on disk. Editing the patch
+            # in-tree would add divergence to carry through every future merge, and
+            # transcribing the body by hand would risk changing its behaviour.
+            #
+            # The alternative -- log_bin_trust_function_creators=1 -- is what
+            # MySQL's own error text suggests, but it weakens binlog safety for
+            # every routine in the instance to fix one function. Declaring the
+            # characteristic is the narrower change.
+            local sed_fix='s/^\(CREATE FUNCTION `swap_wkt_coords`(str TEXT) RETURNS text\) *$/\1\n  DETERMINISTIC\n  NO SQL/'
+
+            # --force ONLY for the two files with upstream-declared skips, so the
+            # whole file still executes; the error allowlist below is what keeps
+            # that safe. Every other file aborts on its first error as normal.
+            local force_flag=""
+            case "$schema_file" in
+                3.0/patches/db_schema_patch-3.1.sql|3.0/patches/db_schema_patch-3.2.sql)
+                    force_flag="--force" ;;
+            esac
+
+            if [ "$schema_file" = "3.0/patches/db_schema_patch-3.2.sql" ]; then
+                sed "$sed_fix" "$full_path" \
+                    | $DOCKER_CMD exec -i -w "/schema/$(dirname "$schema_file")" \
+                        symbiota-mysql-bootstrap \
+                        mysql -u root -p"$MYSQL_ROOT_PASSWORD" $force_flag "$MYSQL_DATABASE" \
+                        2> "$err_log" || load_rc=$?
+            else
+                $DOCKER_CMD exec -i -w "/schema/$(dirname "$schema_file")" \
+                    symbiota-mysql-bootstrap \
+                    mysql -u root -p"$MYSQL_ROOT_PASSWORD" $force_flag "$MYSQL_DATABASE" \
+                    < "$full_path" 2> "$err_log" || load_rc=$?
+            fi
+
+            # With --force, mysql exits 0 even when statements failed, so the
+            # allowlist has to be checked on the error output regardless of exit
+            # code -- not only when load_rc is non-zero.
+            if [ -n "$force_flag" ] && grep -q '^ERROR ' "$err_log"; then
+                if only_expected_1146_errors "$err_log"; then
+                    log_warning "$schema_file: skipped upstream's declared 1.0-only statements"
+                    grep '^ERROR ' "$err_log" | sed 's/^/    /'
+                    load_rc=0
+                else
+                    load_rc=1
+                fi
+            fi
+
+            if [ "$load_rc" -ne 0 ]; then
+                log_error "Failed loading $schema_file:"
+                sed 's/^/    /' "$err_log"
+                rm -f "$err_log"
+                return 1
+            fi
+            rm -f "$err_log"
+
             if [ "$schema_file" = "3.0/patches/db_schema_patch-3.1.sql" ]; then
                 $DOCKER_CMD exec symbiota-mysql-bootstrap mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" <<'EOSQL'
 ALTER TABLE `omoccurrences`
@@ -883,17 +1006,68 @@ EOF
     # Wait briefly for MySQL
     sleep 5
 
-    # Check for key tables
-    local table_count=$($DOCKER_CMD exec symbiota-mysql-verify mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$MYSQL_DATABASE';" 2>/dev/null || echo "0")
+    # A table count alone is a weak check: it passed at 146 tables while the
+    # geography reference data was empty and three feature patches had recorded
+    # truncated names. Assert on the things that actually broke.
+    vq() {
+        $DOCKER_CMD exec symbiota-mysql-verify \
+            mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -N -B \
+            -e "$1" 2>/dev/null
+    }
+
+    local table_count geo_rows sv_width missing_tables recorded_versions
+    table_count=$(vq "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE';")
+    : "${table_count:=0}"
+
+    # Tables that must exist: upstream core, plus one per fork feature patch.
+    local required="omoccurrences omcollections taxa users media schemaversion geographicthesaurus batch ocr_results"
+    missing_tables=""
+    for t in $required; do
+        if [ "$(vq "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE' AND table_name='$t';")" != "1" ]; then
+            missing_tables="$missing_tables $t"
+        fi
+    done
+
+    # Reference data: db_schema-3.0.sql SOURCEs this, and the SOURCE silently
+    # no-ops if the client's cwd is wrong. An empty table here means every
+    # geography lookup in the portal returns nothing.
+    geo_rows=$(vq "SELECT COUNT(*) FROM geographicthesaurus;")
+    : "${geo_rows:=0}"
+
+    # schemaversion.versionnumber must be wide enough for the fork's descriptive
+    # patch names. At varchar(20) three of them are silently truncated by
+    # INSERT IGNORE, which permanently breaks "has this patch been applied?".
+    sv_width=$(vq "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns WHERE table_schema='$MYSQL_DATABASE' AND table_name='schemaversion' AND column_name='versionnumber';")
+    : "${sv_width:=0}"
+
+    # Full, untruncated feature-patch names.
+    local required_versions="3.1 3.2 3.3 3.4 batch-core-patch image-batching-patch batch-ingestion-patch ai-transcription-patch quick-entry-patch portal-mysql57-compat-patch"
+    local missing_versions=""
+    for v in $required_versions; do
+        if [ "$(vq "SELECT COUNT(*) FROM schemaversion WHERE versionnumber='$v';")" != "1" ]; then
+            missing_versions="$missing_versions $v"
+        fi
+    done
+    recorded_versions=$(vq "SELECT GROUP_CONCAT(versionnumber ORDER BY id) FROM schemaversion;")
 
     $COMPOSE_CMD -f "$temp_compose" down >/dev/null 2>&1
     rm -f "$temp_compose"
 
-    if [ "$table_count" -gt 50 ]; then
-        log_success "Database schema verified ($table_count tables loaded)"
-    else
-        log_warning "Database may not be fully initialized (only $table_count tables found)"
+    local verify_failed=0
+    [ "$table_count" -gt 50 ] || { log_error "Only $table_count tables found"; verify_failed=1; }
+    [ -z "$missing_tables" ]  || { log_error "Missing required tables:$missing_tables"; verify_failed=1; }
+    [ "$geo_rows" -gt 0 ]     || { log_error "geographicthesaurus is empty -- data/geothesaurus.sql did not load"; verify_failed=1; }
+    [ "$sv_width" -ge 64 ]    || { log_error "schemaversion.versionnumber is varchar($sv_width); needs >= 64 or patch names truncate"; verify_failed=1; }
+    [ -z "$missing_versions" ] || { log_error "Patch versions not recorded (or truncated):$missing_versions"; verify_failed=1; }
+
+    if [ "$verify_failed" -ne 0 ]; then
+        log_error "Database verification FAILED"
+        log_error "  recorded schemaversion rows: ${recorded_versions:-<none>}"
+        return 1
     fi
+
+    log_success "Database schema verified: $table_count tables, $geo_rows geography rows, versionnumber varchar($sv_width)"
+    log_success "All required patch versions recorded at full length"
 }
 
 # Step 12: Print final instructions
