@@ -41,10 +41,15 @@ $occManager = new OccurrenceEditorDeterminations();
 // Media IDs for quick entry: scope to this collection's first batch only.
 // Calling getImgIDs() with no args loads every image in `media` and can hang or OOM on large DBs.
 $imgIDs = array();
+$firstBatchId = null;
 if ($collid) {
 	$batches = $occManager->getBatch($collid);
 	if (!empty($batches)) {
-		$imgIDs = $occManager->getImgIDs($batches[0]);
+		// Keep the batch id: the quick-entry link below must pass it, or the
+		// target page falls into its unbounded no-batchid branch and scans the
+		// whole media table.
+		$firstBatchId = $batches[0];
+		$imgIDs = $occManager->getImgIDs($firstBatchId);
 	}
 }
 $imgNum = count($imgIDs);
@@ -52,6 +57,11 @@ $occData = array();
 if ($imgNum > 0) {
 	$firstImgId = $imgIDs[0];
 	$firstBarcode = $occManager->getBarcode($firstImgId);
+	// Real occid for the first image, so the quick-entry link opens that
+	// specimen instead of a hardcoded unrelated record. Inherited from
+	// OccurrenceEditorManager; returns null when the image has no occurrence yet,
+	// which is a legitimate state for an untranscribed batch image.
+	$firstOccId = $occManager->getOneOccID($firstImgId);
 	$firstIndex = 0;
 	$lastImgId = $imgIDs[$imgNum - 1];
 	$lastBarcode = $occManager->getBarcode($lastImgId);
@@ -60,6 +70,7 @@ if ($imgNum > 0) {
 } else {
 	$firstImgId = '';
 	$firstBarcode = null;
+	$firstOccId = null;
 	$firstIndex = 0;
 	$lastImgId = '';
 	$lastBarcode = null;
@@ -499,11 +510,46 @@ if ($imgNum > 0) {
 								</a>
 							</li>
 						<!-- add the link to quick entry form -->
+						<?php if ($firstBatchId && $imgNum > 0): ?>
 						<li>
-							<a href="../quickentry/occurrencequickentry.php?csmode=0&collid=<?= $collid ?>&&imgid=<?= $firstImgId ?>&imgindex=1&barcode=0&occid=5639&occindex=1">
+							<?php
+							// Every parameter here is derived from this collection's
+							// first batch. Previously this link sent
+							// `imgid=<first>&imgindex=1&barcode=0&occid=5639` with no
+							// batchid, which caused two separate problems:
+							//
+							//   - No batchid meant occurrencequickentry.php fell into
+							//     its else branch and called getImgIDs() with no
+							//     argument, selecting every row in `media` portal-wide
+							//     and then issuing one query per row. This file already
+							//     scopes its own call to one batch and carries a comment
+							//     warning about exactly that, but the URL it emitted
+							//     routed straight into the unguarded path.
+							//   - occid=5639 was a hardcoded record from some other
+							//     collection, so the form opened against an unrelated
+							//     specimen. imgindex=1 with imgid=<first> was also
+							//     inconsistent: the first image is index 0, so the
+							//     navigation offset disagreed with the image shown.
+							//
+							// occid is omitted when the first image has no occurrence
+							// yet -- an untranscribed batch image legitimately has none,
+							// and the target resolves it from imgid in that case.
+							$qeParams = array(
+								'csmode'   => 0,
+								'collid'   => $collid,
+								'batchid'  => $firstBatchId,
+								'imgid'    => $firstImgId,
+								'imgindex' => $firstIndex,
+								'barcode'  => ($firstBarcode !== null ? $firstBarcode : 0),
+								'occindex' => 0,
+							);
+							if ($firstOccId) $qeParams['occid'] = $firstOccId;
+							?>
+							<a href="../quickentry/occurrencequickentry.php?<?= htmlspecialchars(http_build_query($qeParams), ENT_QUOTES, 'UTF-8') ?>">
 								<?= $LANG['QUICK_ENTRY_FORM'] ?>
 							</a>
 						</li>
+						<?php endif; ?>
 						<!-- add a bullet point to link to the image batch -->
 						<li>
 							<a href="../quickentry/transcribe.php?collid=<?php echo $collid;?>">
