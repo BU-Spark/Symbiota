@@ -300,12 +300,6 @@ function submitQueryTable(f){
 	return true;
 }
 
-// For quick entry form 
-function navigateToURL(coll) {
-    var url = "../editor/transcribe.php?collid=" + coll;
-    window.location.href = url;
-}
-
 function setOrderBy(formObject){
 	/*
 	if(formObject.value != ""){

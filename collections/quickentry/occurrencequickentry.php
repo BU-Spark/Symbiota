@@ -4,6 +4,15 @@ include_once($SERVER_ROOT.'/content/lang/collections/editor/occurrenceeditor.'.$
 
 header("Content-Type: text/html; charset=".$CHARSET);
 
+//Emit $val as a JS literal that is safe inside a double-quoted HTML event attribute.
+//Two encodings are needed and both matter: json_encode escapes the value for the JS
+//string context, htmlspecialchars escapes json_encode's own double quotes for the
+//attribute context. Falsy stays bare `null`, matching what the callers emitted before.
+function qeJsAttrArg($val){
+	if(!$val) return 'null';
+	return htmlspecialchars(json_encode((string)$val), ENT_QUOTES, 'UTF-8');
+}
+
 $occId = array_key_exists('occid',$_REQUEST)?filter_var($_REQUEST['occid'], FILTER_SANITIZE_NUMBER_INT):'';
 $collId = array_key_exists('collid',$_REQUEST)?filter_var($_REQUEST['collid'], FILTER_SANITIZE_NUMBER_INT):false;
 $tabTarget = array_key_exists('tabtarget',$_REQUEST)?$_REQUEST['tabtarget']:0;
@@ -262,8 +271,11 @@ if($SYMB_UID){
 	include_once '../../collections/editor/editProcessor.php';
 	if($action == 'saveOccurEdits'){
 		$statusStr = $occManager->editOccurrence($_POST,$isEditor);
-		$updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId);
-	} 
+		//Only write the batch bookmark for users editOccurrence would actually accept an edit from,
+		//and scope it to $collId (reconciled to $collMap['collid'] above) so an editor of one
+		//collection cannot touch another collection's batch row by posting an arbitrary batchid.
+		if($isEditor) $updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId, $collId);
+	}
 
 	if($isEditor){
 		//Available to full editors and taxon editors
@@ -525,20 +537,20 @@ if($SYMB_UID){
 
 	if($imgNum !== false){
 		$navStr = '<b>';
-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($firstImgId?$firstImgId:'null').', '.($firstIndex).', '.($firstBarcode?"'".$firstBarcode."'":'null').', '.($firstOccId?$firstOccId:'null').', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
+		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($firstImgId?$firstImgId:'null').', '.($firstIndex).', '.qeJsAttrArg($firstBarcode).', '.($firstOccId?$firstOccId:'null').', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
 		$navStr .= '|&lt;';
 		if($currentImgIndex > 0) $navStr .= '</a>';
 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($prevImgid).', '.($currentImgIndex-1).', '.($prevBarcode?"'".$prevBarcode."'":'null').', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
+		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($prevImgid).', '.($currentImgIndex-1).', '.qeJsAttrArg($prevBarcode).', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
 		$navStr .= '&lt;&lt;';
 		if($currentImgIndex > 0) $navStr .= '</a>';
 		$recIndex = ($currentImgIndex<$imgNum?($currentImgIndex + 1):'*');
 		$navStr .= '&nbsp;&nbsp;| '.($recIndex).' of '.($imgNum).' |&nbsp;&nbsp;';
-		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($nextImgid).', '.($currentImgIndex+1).', '.($nextBarcode?"'".$nextBarcode."'":'null').', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
+		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($nextImgid).', '.($currentImgIndex+1).', '.qeJsAttrArg($nextBarcode).', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
 		$navStr .= '&gt;&gt;';
 		if($currentImgIndex < $imgNum-1) $navStr .= '</a>';
 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
-		if($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($lastImgId?$lastImgId:'null').', '.($lastIndex).', '.($lastBarcode?"'".$lastBarcode."'":'null').', '.($lastOccId?$lastOccId:'null').', '.($lastIndex).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
+		if($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($lastImgId?$lastImgId:'null').', '.($lastIndex).', '.qeJsAttrArg($lastBarcode).', '.($lastOccId?$lastOccId:'null').', '.($lastIndex).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
 		$navStr .= '&gt;|';
 		if($currentImgIndex < $imgNum-1) $navStr .= '</a> ';
 		$navStr .= '</b>';
@@ -683,13 +695,13 @@ else{
 				lastModifiedElement.textContent = 'Last Modified: ' + convertTimeToUserTimezone(last_modified_utc);
 			});
 
-			var barcodeHashTable = <?php echo json_encode($barcodeHashTable); ?>;
-			var occIdHashTable = <?php echo json_encode($occIdHashTable); ?>;
+			var barcodeHashTable = <?php echo json_encode($barcodeHashTable, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+			var occIdHashTable = <?php echo json_encode($occIdHashTable, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 			function jumpToPage() {
 				// Get the page number from the input field
 				var pageNumberInput = document.getElementById("pageNumber");
     			var pageNumber = parseInt(pageNumberInput.value);
-				var imgids = <?php echo json_encode($imgIDs); ?>;
+				var imgids = <?php echo json_encode($imgIDs, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 
 				// Check if the page number is a valid key in the hash tables
 				if (pageNumber in barcodeHashTable && pageNumber in occIdHashTable) {
@@ -700,7 +712,7 @@ else{
 					var crowdSourceMode = <?php echo $crowdSourceMode; ?>;
 					var gotomode = <?php echo $goToMode; ?>;
 					var collId = <?php echo $collId; ?>;
-					var batchId = <?php echo json_encode($batchId); ?>;
+					var batchId = <?php echo json_encode($batchId, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 					var occIndex = pageNumber - 1; 
 
 					// Call the navigateToRecordNew function with the calculated parameters
@@ -856,7 +868,7 @@ else{
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['BARCODE']) ? $LANG['BARCODE'] : 'Barcode'); ?></span>
 								<span class="field-elem">
-									<input type="text" size = '50' id="barcode" name="barcode" value="<?php echo($barcode) ?>" onchange="fieldChanged('barcode');" <?php if($isEditor > 2) echo 'disabled'; ?> autocomplete="off" />
+									<input type="text" size = '50' id="barcode" name="barcode" value="<?php echo htmlspecialchars((string)$barcode, ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('barcode');" <?php if($isEditor > 2) echo 'disabled'; ?> autocomplete="off" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -1139,16 +1151,16 @@ else{
 													<button 
 														type="submit" 
 														value="Previous" 
-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . ($prevBarcode ? "'".$prevBarcode."'" : 'null') . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
+														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . qeJsAttrArg($prevBarcode) . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
 														Previous
 													</button>
 													<a href="../misc/collprofiles.php?collid=<?php echo $collId; ?>&emode=1" >
-														<button type="button" value="Done" onclick="navigateToURL(<?php echo $collId; ?>)">Done</button>
+														<button type="button" value="Done">Done</button>
 													</a>
 													<button 
 														type="submit" 
 														value="Next" 
-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . ($nextBarcode ? "'".$nextBarcode."'" : 'null') . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
+														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . qeJsAttrArg($nextBarcode) . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
 														Next
 													</button>
 													<input type="hidden" name="occindex" value="<?php echo is_numeric($occIndex)?$occIndex:''; ?>" />
