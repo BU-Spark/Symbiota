@@ -1,0 +1,40 @@
+# Fire a repository_dispatch to se-symbiota-private on push, so its
+# publish-symbiota-ghcr.yml (build-symbiota event) builds this ref and
+# publishes it to GHCR.
+#
+# Part of se-symbiota-private issue #17. publish-symbiota-ghcr.yml's own
+# header comment already documents this exact mechanism and the `gh api`
+# call it expects -- this is that "one-line workflow in se-symbiota, once
+# Actions is enabled there" it anticipated. Actions were confirmed enabled
+# here (repos/BU-Spark/se-symbiota/actions/permissions) on 2026-08-24.
+#
+# int auto-builds AND auto-deploys (the deploy side is wired via
+# herbaria_runtime's webhook hook in se-symbiota-private, not here). alpha
+# auto-builds too, but nothing consumes an alpha publish automatically --
+# promoting it to the alpha host stays a deliberate, separate action.
+
+name: Notify se-symbiota-private to build
+
+on:
+  push:
+    branches: [int-all-features, alpha-all-features]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire repository_dispatch
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # ref is constrained by this workflow's own `on.push.branches`
+          # filter, but validate anyway rather than trust that alone.
+          if [[ ! "$REF" =~ ^(int-all-features|alpha-all-features)$ ]]; then
+            echo "::error::unexpected ref: $REF"
+            exit 1
+          fi
+          gh api repos/BU-Spark/se-symbiota-private/dispatches \
+            -f event_type=build-symbiota \
+            -F "client_payload[ref]=${REF}"
