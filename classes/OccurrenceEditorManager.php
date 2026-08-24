@@ -2601,30 +2601,59 @@ class OccurrenceEditorManager {
 
 	public function getImageMap($imgId = 0) {
 		$imageMap = array();
-		// NOTE: this is commented to let the code work with current database
-		// if ($this->occid) {
-		// 	$sql = 'SELECT mediaID, url, thumbnailurl, originalurl, caption, creator, creatorUid, sourceurl, copyright, notes, occid, username, sortOccurrence, initialtimestamp FROM media ';
-		// 	if ($imgId) $sql .= 'WHERE AND (mediaID = ' . $imgId . ') ';
-		// 	else $sql .= 'WHERE mediaType = "image" AND (occid = ' . $this->occid . ') ';
-		// 	$sql .= 'ORDER BY sortOccurrence';
-		// 	//echo $sql;
-		// 	$result = $this->conn->query($sql);
-		// 	while ($row = $result->fetch_object()) {
-		// 		$imageMap[$row->mediaID]['url'] = $row->url;
-		// 		$imageMap[$row->mediaID]['tnurl'] = $row->thumbnailurl;
-		// 		$imageMap[$row->mediaID]['origurl'] = $row->originalurl;
-		// 		$imageMap[$row->mediaID]['caption'] = $row->caption;
-		// 		$imageMap[$row->mediaID]['creator'] = $row->creator;
-		// 		$imageMap[$row->mediaID]['creatorUid'] = $row->creatorUid;
-		// 		$imageMap[$row->mediaID]['sourceurl'] = $row->sourceurl;
-		// 		$imageMap[$row->mediaID]['copyright'] = $row->copyright;
-		// 		$imageMap[$row->mediaID]['notes'] = $row->notes;
-		// 		$imageMap[$row->mediaID]['occid'] = $row->occid;
-		// 		$imageMap[$row->mediaID]['username'] = $row->username;
-		// 		$imageMap[$row->mediaID]['sort'] = $row->sortOccurrence;
-		// 	}
-		// 	$result->free();
-		// }
+		// Restored. The whole body was commented out with "this is commented to let
+		// the code work with current database", which made the stock occurrence
+		// editor silently never show specimen images: both callers
+		// (occurrenceeditor.php:488, determinationtab.php:29) use the returned array
+		// to decide whether to render the image panel at all, so an always-empty map
+		// hides it unconditionally.
+		//
+		// That reason is obsolete. This query reads FROM media, and before patch 3.2
+		// the table was named `images` (3.2 renames it and maps imgid -> mediaID,
+		// photographer -> creator, photographerUid -> creatorUid) -- so on a
+		// pre-3.2 database it could only ever fail. Every column referenced here
+		// exists on 3.4.x; the case differences (thumbnailUrl vs thumbnailurl) do
+		// not matter, MySQL column names are case-insensitive.
+		//
+		// Two changes from the commented original, both necessary:
+		//
+		//   1. `WHERE AND (mediaID = ...)` is invalid SQL. It is dead code today --
+		//      both callers pass no argument, so $imgId is always 0 and only the
+		//      else branch runs -- but restoring it verbatim would leave a
+		//      guaranteed syntax error waiting for the first caller that passes an
+		//      id. Upstream has the same typo (v3.4.14
+		//      classes/OccurrenceEditorManager.php:2466) and should be told.
+		//   2. $imgId and $this->occid were interpolated straight into the SQL.
+		//      Now bound as integers.
+		if ($this->occid) {
+			$sql = 'SELECT mediaID, url, thumbnailurl, originalurl, caption, creator, creatorUid, sourceurl, copyright, notes, occid, username, sortOccurrence, initialtimestamp FROM media ';
+			if ($imgId) $sql .= 'WHERE (mediaID = ?) ';
+			else $sql .= 'WHERE mediaType = "image" AND (occid = ?) ';
+			$sql .= 'ORDER BY sortOccurrence';
+			if ($stmt = $this->conn->prepare($sql)) {
+				$bindValue = $imgId ? (int) $imgId : (int) $this->occid;
+				$stmt->bind_param('i', $bindValue);
+				if ($stmt->execute()) {
+					$result = $stmt->get_result();
+					while ($row = $result->fetch_object()) {
+						$imageMap[$row->mediaID]['url'] = $row->url;
+						$imageMap[$row->mediaID]['tnurl'] = $row->thumbnailurl;
+						$imageMap[$row->mediaID]['origurl'] = $row->originalurl;
+						$imageMap[$row->mediaID]['caption'] = $row->caption;
+						$imageMap[$row->mediaID]['creator'] = $row->creator;
+						$imageMap[$row->mediaID]['creatorUid'] = $row->creatorUid;
+						$imageMap[$row->mediaID]['sourceurl'] = $row->sourceurl;
+						$imageMap[$row->mediaID]['copyright'] = $row->copyright;
+						$imageMap[$row->mediaID]['notes'] = $row->notes;
+						$imageMap[$row->mediaID]['occid'] = $row->occid;
+						$imageMap[$row->mediaID]['username'] = $row->username;
+						$imageMap[$row->mediaID]['sort'] = $row->sortOccurrence;
+					}
+					$result->free();
+				}
+				$stmt->close();
+			}
+		}
 		$this->cleanOutArr($imageMap);
 		return $imageMap;
 	}
@@ -3161,16 +3190,28 @@ class OccurrenceEditorManager {
 				}
 			}
 		}
-		else {
-			$sql = 'SELECT mediaID FROM media WHERE (mediaType = \'image\' OR mediaType IS NULL) ORDER BY mediaID ASC';
-			$result = $this->conn->query($sql);
-			if ($result) {
-				while ($row = $result->fetch_assoc()) {
-					$imgIDs[] = (int)$row['mediaID'];
-				}
-				$result->free();
-			}
-		}
+		// No batchId: return nothing rather than every image in the portal.
+		//
+		// This branch used to run `SELECT mediaID FROM media WHERE mediaType =
+		// 'image' OR mediaType IS NULL` with no LIMIT, and its callers then issued
+		// one getOneOccID() query per returned row (plus getBarcode(), itself two
+		// more queries each). On a portal with 200k media rows that is 200k+
+		// sequential round trips and a 200k-element PHP array -- per request, and
+		// reachable before any auth check in occurrencequickentry.php. A handful
+		// of concurrent anonymous requests exhausted the DB connections or hit
+		// PHP's memory_limit.
+		//
+		// Every caller except one already passes a batchId (collprofiles.php:52,
+		// transcribe.php:54, occurrencequickentry.php:57). The exception,
+		// occurrencequickentry.php:97, only reached this branch because
+		// collprofiles.php emitted a quick-entry URL without batchid -- fixed in
+		// the same change as this. An empty list is the honest answer there: with
+		// no batch selected there is no defined set of images to page through,
+		// and the page already handles $imgNum === 0.
+		//
+		// Kept as an empty return rather than removing the parameter default, so
+		// that any caller not found by grep degrades to "no images" instead of a
+		// fatal ArgumentCountError.
 		return $imgIDs;
 	}
 
