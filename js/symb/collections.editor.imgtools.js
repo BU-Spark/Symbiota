@@ -1025,8 +1025,50 @@ function UpdateFromWithOCR() {
 	};
 
 	const barcodePattern = /^[A-Z]{1,3}\d{5,}$/i;
+	// An institution code is a short controlled-vocabulary token ("BU", "HUH", "NEBC"),
+	// never a sentence. Used to decide whether an unmapped OCR line could plausibly be
+	// one, instead of assuming every unmapped line is.
+	const institutionCodePattern = /^[A-Za-z0-9.\-]{2,12}$/;
 	const institutionFallbackParts = [];
 	let institutionAssigned = false;
+	const skipped = [];
+	const unmapped = [];
+
+	// Guarded write. OCR must never destroy data that is already on the record:
+	// an empty extraction, or a field the user cannot edit, is skipped rather than applied.
+	// Non-empty fields are also left alone and reported, so re-running OCR after a manual
+	// correction cannot silently revert it.
+	function applyOcrValue(field, value, key) {
+		if (!field) {
+			console.warn(`Unable to locate input field for key '${key}'.`);
+			return false;
+		}
+		if (!value || !value.trim()) {
+			console.warn(`OCR returned an empty value for '${key}'; leaving the field as it is.`);
+			return false;
+		}
+		// Deliberately not testing visibility (offsetParent etc): the "Minimal" toggle
+		// hides real, submitting fields, and skipping those would break normal transcription.
+		if (field.disabled || field.readOnly || field.type === 'hidden') {
+			console.warn(`Field for '${key}' is not user-editable; not writing OCR output to it.`);
+			return false;
+		}
+		if (field.value && field.value.trim() && field.value.trim() !== value.trim()) {
+			// ponytail: preserve the human's value. Flip to overwrite-always by deleting
+			// this block if curators would rather OCR win.
+			skipped.push(key);
+			const keepBlock = field.closest(".field-block") || field.closest(".field-div");
+			const keepLabel = keepBlock ? keepBlock.querySelector(".field-label") : null;
+			if (keepLabel) keepLabel.classList.add("ocr-conflict-label");
+			return false;
+		}
+		field.value = value;
+		field.dispatchEvent(new Event("change"));
+		const fieldBlock = field.closest(".field-block") || field.closest(".field-div");
+		const label = fieldBlock ? fieldBlock.querySelector(".field-label") : null;
+		if (label) label.classList.add("highlight-label");
+		return true;
+	}
 
 	lines.forEach(line => {
 		if (line.trim() === "") return;
@@ -1057,12 +1099,17 @@ function UpdateFromWithOCR() {
 				value = value.match(barcodePattern)[0];
 			}
 			else {
-				const fallbackTextSource = value || key;
-				const fallbackText = fallbackTextSource.trim();
-				if (fallbackText) {
+				// Unmapped line. Only a lone institution-code-shaped token is a plausible
+				// candidate for the institutionCode fallback below; everything else (habitat,
+				// elevation, collector number, free-text notes) has no home on this form and
+				// must NOT be concatenated into a controlled-vocabulary field.
+				const fallbackText = (value || key).trim();
+				if (!fallbackText) {
+					console.warn(`Unrecognized key '${key}' with empty value in OCR response.`);
+				} else if (institutionCodePattern.test(fallbackText)) {
 					institutionFallbackParts.push(fallbackText);
 				} else {
-					console.warn(`Unrecognized key '${key}' with empty value in OCR response.`);
+					unmapped.push(fallbackText);
 				}
 				return;
 			}
@@ -1070,54 +1117,42 @@ function UpdateFromWithOCR() {
 
 		let field = fieldGetters[normalizedKey] ? fieldGetters[normalizedKey]() : null;
 
-		// Find the input field by key
-		if (field) {
-			field.value = value;
-			field.dispatchEvent(new Event("change"));
-
-			// Find the corresponding label and bold it
-			let fieldBlock = field.closest(".field-block") || field.closest(".field-div");
-			if (fieldBlock) {
-				let label = fieldBlock.querySelector(".field-label");
-				if (label) {
-					label.classList.add("highlight-label");
-				}
+		if (applyOcrValue(field, value, normalizedKey) && normalizedKey === 'institutionCode') {
+			institutionAssigned = true;
+			// Update the institution code display at the top of the page
+			const displayElement = document.getElementById("institution-code-display");
+			if (displayElement) {
+				displayElement.textContent = value;
 			}
-
-			if (normalizedKey === 'institutionCode') {
-				institutionAssigned = true;
-				// Update the institution code display at the top of the page
-				const displayElement = document.getElementById("institution-code-display");
-				if (displayElement) {
-					displayElement.textContent = value;
-				}
-			}
-		} else {
-			console.warn(`Unable to locate input field for key '${normalizedKey}'.`);
 		}
 	});
 
-	if (!institutionAssigned && institutionFallbackParts.length) {
+	// Exactly one code-shaped candidate is a usable guess; two or more means we do not know
+	// which is the institution, so guessing would be worse than leaving the field blank.
+	if (!institutionAssigned && institutionFallbackParts.length === 1) {
 		const institutionField = fieldGetters['institutionCode'] ? fieldGetters['institutionCode']() : null;
-		const institutionValue = institutionFallbackParts.join(" ").replace(/\s+/g, " ").trim();
-		if (institutionField && institutionValue) {
-			institutionField.value = institutionValue;
-			institutionField.dispatchEvent(new Event("change"));
-			let fieldBlock = institutionField.closest(".field-block") || institutionField.closest(".field-div");
-			if (fieldBlock) {
-				let label = fieldBlock.querySelector(".field-label");
-				if (label) {
-					label.classList.add("highlight-label");
-				}
-			}
+		const institutionValue = institutionFallbackParts[0];
+		if (applyOcrValue(institutionField, institutionValue, 'institutionCode')) {
 			// Update the institution code display at the top of the page
 			const displayElement = document.getElementById("institution-code-display");
 			if (displayElement) {
 				displayElement.textContent = institutionValue;
 			}
 		}
+	} else if (!institutionAssigned && institutionFallbackParts.length > 1) {
+		console.warn(`Multiple institution-code candidates (${institutionFallbackParts.join(", ")}); leaving institutionCode blank.`);
 	}
-	
+
+	// Tell the transcriber what OCR read but could not place, instead of silently
+	// discarding it or hiding it in institutionCode. This form has no field for these.
+	if (unmapped.length) {
+		console.info(`OCR text with no matching field on this form (${unmapped.length}): ${unmapped.join(" | ")}`);
+	}
+	if (skipped.length) {
+		alert("OCR differed from values already on the record for: " + skipped.join(", ") +
+			"\n\nThose fields were left unchanged. Clear a field and re-run OCR if you want the OCR value.");
+	}
+
 	// Reset button state after successful update
 	const updateButton = document.getElementById("updateButton");
 	if (updateButton) {
