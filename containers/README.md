@@ -71,15 +71,19 @@ Clone `se-symbiota` and check out the demo branch (a git worktree on that branch
 ```bash
 git clone https://github.com/BU-Spark/se-symbiota.git
 cd se-symbiota
-git checkout v3.4.1-all-features
+git checkout dev-all-features
 ```
+
+> `v3.4.1-all-features` was named here previously. That branch has been renamed
+> `DNU-v3.4.1-all-features`, so the old command failed at the checkout. The
+> integration line is `dev-all-features`, which currently carries upstream 3.4.14.
 
 Also clone the two companion repos you will need later. Clone them as
 **siblings of `se-symbiota`** (next to it, not inside it), so the relative paths
 used later (`../../herbaria-ocr-middleware`, the overlay copy) line up:
 
 ```bash
-# instance config overlay — check out the version-matched branch now
+# instance config overlay -- see the version-mismatch warning below
 git clone --branch config-v3.4.1 https://github.com/BU-Spark/se-symbiota-private.git
 
 # OCR service (default branch `main`)
@@ -87,6 +91,18 @@ git clone https://github.com/BU-Spark/herbaria-ocr-middleware.git
 ```
 
 - `BU-Spark/se-symbiota-private` (branch `config-v3.4.1`) — instance config overlay (used in step 6).
+
+> ⚠️ **There is no version-matched overlay branch.** `config-v3.4.1` is the newest
+> one that exists, and the code you just checked out is 3.4.14. This document
+> warns further down that a version-mismatched overlay produces an **unstyled site
+> with no error message**, so if the portal comes up looking broken rather than
+> failing loudly, this is the first thing to suspect. Cutting a matching overlay
+> branch is tracked as medium 15 in the handover audit
+> (`se-symbiota-private` issue #11).
+>
+> Do **not** substitute `dev-all-features` from that repo: it is the int
+> deployment config and points at int's database host and credentials, not a local
+> stack.
 - `BU-Spark/herbaria-ocr-middleware` (branch `main`) — the OCR service (used in step 7).
 
 > Both repos are under the `BU-Spark` GitHub org and may be private; if a clone
@@ -179,11 +195,35 @@ an `admin` user (0 specimens).
 > step 8. Save the file as `containers/dump.sql` (or adjust the path in the command
 > below) before running the import.
 >
-> **If you cannot obtain the dump,** skip this shortcut and build the schema from
-> scratch via the from-scratch path described just below (`docs/INSTALL.md`), heeding
-> the MariaDB-vs-MySQL 8 caveat — note the audit found the shipped MySQL 8 container's
-> own patches do not apply cleanly and a MariaDB 10.11 DB was required to load the
-> reference/geothesaurus data.
+> **If you cannot obtain the dump,** build the schema from scratch instead. This is
+> now a real alternative rather than a fallback, and it does not need anyone to hand
+> you a file:
+>
+> ```bash
+> ./containers/scripts/bootstrap-symbiota.sh
+> ```
+>
+> Measured against `mysql:8.0.42` (the pinned runtime image) on 2026-08-25: the full
+> upstream patch chain applies with **no errors** beyond three documented
+> `ERROR 1146` table renames that upstream's own comments say are expected on a
+> 3.0-lineage install, producing **155 tables**, a seeded `geographicthesaurus`
+> (9,407 rows), and `schemaversion.versionnumber` widened to `varchar(64)`.
+>
+> This supersedes an earlier note here saying the MySQL 8 patches "do not apply
+> cleanly and a MariaDB 10.11 DB was required". That was true of a plain
+> file-by-file load; it is not true of the bootstrap script, which supplies the two
+> things a plain load is missing -- a foreign-key shim before patch 3.1, and
+> `--force` on the two patches that are *expected* to emit errors.
+>
+> The FK shim is not optional. Without it, patch 3.1 cannot drop an index that backs
+> a foreign key, `omoccurrences` then hits MySQL's 64-index ceiling, patch 3.4 aborts
+> partway through, and `mediametadata` is never created -- while `schemaversion`
+> still records `3.4`, because upstream writes that row at the top of the file. You
+> get 154 tables and a database that claims to be fully patched.
+>
+> You will still need an `admin` login. The bootstrap creates the schema, not a user;
+> see the from-scratch path in upstream `docs/INSTALL.md` for creating the first
+> account.
 
 ```bash
 docker exec -i symbiota-db-dev mysql -uroot -ppassword \
@@ -191,10 +231,15 @@ docker exec -i symbiota-db-dev mysql -uroot -ppassword \
 docker exec -i symbiota-db-dev mysql -uroot -ppassword symbiota < dump.sql
 ```
 
-If instead you build the schema from scratch, see `docs/INSTALL.md` and note the
-caveats it documents: the MariaDB-vs-MySQL 8 patch behavior, the geothesaurus import
-needing the correct working directory, the orphaned custom-feature patches, and the
-3.4 patch.
+If instead you build the schema from scratch, prefer
+`./containers/scripts/bootstrap-symbiota.sh` (see the note in step 5) -- it handles
+the four things a hand-rolled load gets wrong: the FK shim before patch 3.1, the
+`--force` gating on the patches that are expected to error, the `SOURCE
+data/geothesaurus.sql` path that only resolves if the client's working directory is
+the file's own directory, and the missing DETERMINISTIC characteristic on
+`swap_wkt_coords` that MySQL 8 rejects outright when binary logging is on.
+
+Upstream `docs/INSTALL.md` describes the manual sequence, but it predates all four.
 
 ### 6. Apply the config overlay (complete + version-matched)
 
