@@ -608,6 +608,29 @@ Change `HTTP_PORT` and `MYSQL_PORT` in `.env`
 ## Architecture
 
 - **Web container:** Ubuntu 22.04 + PHP 8.1 + Apache + Tesseract OCR
+### Constraint: the portal must be served from the web root
+
+The seven quick-entry autocomplete fields fetch from **root-absolute** paths:
+
+```js
+source: "/collections/quickentry/rpc/getcurrnamesuggest.php",   // and 6 more
+```
+`js/symb/collections.editor.main.js:89-143`
+
+So deploying under a subdirectory (`https://host/portal/`) breaks every one of them
+-- each request goes to `https://host/collections/...` and 404s, with the visible
+symptom being autocompletes that simply never return anything. Note the adjacent
+*upstream* autocomplete uses a relative `rpc/getspeciessuggest.php`, and the PHP
+templates build URLs from `$CLIENT_ROOT`, so this is fork-added divergence rather
+than a Symbiota convention.
+
+Both int and alpha serve from the web root, so nothing is broken today. Recorded
+because it is invisible until someone changes the deployment path, and then the
+failure gives no error. The fix, if it is ever needed, is to emit `$CLIENT_ROOT`
+into a JS global and prefix these seven, or make them relative as upstream does.
+This is handover-audit finding low 9, which the audit itself marked
+"document rather than fix".
+
 - **Database container:** MySQL 8.0.42 (MySQL 5.7 cannot restore the shipped dumps; the dev audit also validated MariaDB 10.11)
 - **Network:** Bridge network for container communication
 - **Volumes:** Named volume for persistent database storage
