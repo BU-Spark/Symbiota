@@ -98,6 +98,22 @@ function applyConfidenceToField(elem, fieldKey, confidenceMap){
 		}
 	}
 	catch(err){ /* tooltip not available; title attr still shows native tooltip */ }
+
+	// The score describes the value the MODEL produced. Once a human edits the field
+	// the score no longer applies, so clear the styling on first input -- otherwise a
+	// corrected date keeps sitting there red at "ML confidence: 45%", which reads as
+	// "this is still wrong". `once` means the listener does not accumulate across
+	// repeated OCR runs on the same field.
+	elem.addEventListener("input", function(){
+		this.style.backgroundColor = "";
+		this.classList.remove("ml-confidence-field");
+		this.removeAttribute("data-confidence");
+		this.removeAttribute("title");
+		try{
+			if(typeof $ !== "undefined" && $(this).data("ui-tooltip")) $(this).tooltip("destroy");
+		}
+		catch(err){ /* no tooltip widget attached */ }
+	}, { once: true });
 }
 
 // Detect the structured envelope by its envelope markers (_confidence / _meta),
@@ -765,9 +781,10 @@ function quickEntryOcrImage(ocrButton, imgidVar, imgCnt, imgURl) {
 					if (key === "_confidence" || key === "_meta") continue;
 					plainTextResponse += `${key}: ${value}\n`;
 				}
-				if (ocrAnalysisMode) {
-					plainTextResponse = normalizeFieldValueText(plainTextResponse);
-				}
+				// Deliberately NOT normalizeFieldValueText'd, even in analysis mode: the
+				// middleware envelope is already `key: value` with canonical DWC keys, so
+				// normalising it can only lose fields (it keeps a 7-key allowlist and
+				// discards the rest). See audit low 7.
 				storedOcrResponse = plainTextResponse;
 				if (rawtextBox) rawtextBox.value = plainTextResponse;
 			}
@@ -820,8 +837,14 @@ function normalizeFieldValueText(rawText){
 	const barcodePattern = /^[A-Z]{1,3}\d{5,}$/i;
 	const institutionFallbackParts = [];
 	
-	const knownFields = ['recordedBy', 'location', 'scientificName', 'eventDate', 'barcode', 'institutionCode', 'image_path'];
-	
+	// The fields the quick-entry form can actually place, plus every DWC key the
+	// confidence pipeline emits. Without the dwcToFormField keys, a recognised line
+	// like "family: Aceraceae" is treated as unknown and destroyed below.
+	const knownFields = ['recordedBy', 'location', 'scientificName', 'eventDate', 'barcode', 'institutionCode', 'image_path']
+		.concat(Object.keys(dwcToFormField));
+	const institutionCodePattern = /^[A-Za-z0-9.\-]{2,12}$/;
+	const droppedLines = [];
+
 	for(let i = 0; i < lines.length; i++){
 		let line = lines[i].trim();
 		if(!line) continue;
@@ -856,19 +879,30 @@ function normalizeFieldValueText(rawText){
 			continue;
 		}
 
-		// If it has a colon and both key and value, keep it as-is for now
+		// An unrecognised "key: value" line. Its value is NOT institution data --
+		// pushing it here is what turned institutionCode into a dumping ground for the
+		// whole label. Keep the line intact so nothing is silently lost.
 		if(colonIndex !== -1 && key && value){
-			institutionFallbackParts.push(value);
+			normalized.push(`${key}: ${value}`);
 			continue;
 		}
-		
+
+		// Structureless text. Only a short code-shaped token is a plausible institution
+		// code ("BU", "NEBC"); prose is recorded and reported, never folded into a
+		// controlled-vocabulary field.
+		const consider = (text) => {
+			if(!text) return;
+			if(institutionCodePattern.test(text)) institutionFallbackParts.push(text);
+			else droppedLines.push(text);
+		};
+
 		// Single word or phrase without clear key-value structure
 		const spaceIndex = line.indexOf(" ");
 		if(spaceIndex !== -1 && colonIndex === -1){
 			const firstWord = line.slice(0, spaceIndex).trim();
 			const rest = line.slice(spaceIndex + 1).trim();
 			if(firstWord && rest){
-				institutionFallbackParts.push(rest);
+				consider(rest);
 				continue;
 			}
 		}
@@ -886,32 +920,41 @@ function normalizeFieldValueText(rawText){
 		}
 
 		if(valueLine){
-			institutionFallbackParts.push(valueLine);
+			consider(valueLine);
 			i = j;
 		}
 		else if(key){
-			institutionFallbackParts.push(key);
+			consider(key);
 		}
 	}
-	
-	// Add institution code from fallback parts if we collected any
-	if(institutionFallbackParts.length > 0){
-		const institutionValue = institutionFallbackParts.join(" ").replace(/\s+/g, " ").trim();
-		if(institutionValue){
-			normalized.push(`institutionCode: ${institutionValue}`);
-		}
+
+	// Exactly one code-shaped candidate is a usable guess; two or more means we cannot
+	// tell which is the institution, so emitting either would be worse than emitting none.
+	if(institutionFallbackParts.length === 1){
+		normalized.push(`institutionCode: ${institutionFallbackParts[0]}`);
 	}
-	
+	else if(institutionFallbackParts.length > 1){
+		console.warn(`Multiple institution-code candidates (${institutionFallbackParts.join(", ")}); leaving institutionCode unset.`);
+	}
+	if(droppedLines.length){
+		console.info(`OCR text with no recognised field (${droppedLines.length}): ${droppedLines.join(" | ")}`);
+	}
+
 	return normalized.join("\n");
 }
 
 function handleUpdateButtonClick() {
 	if (updateState === "needsValidation") {
-		confirmOCRresult();
-		updateState = "ready";
-		const btn = document.getElementById("updateButton");
-		btn.innerText = "Update Form";
-		btn.value = "Update Form";
+		// Only advance to "Update Form" if validation actually passed. Previously the
+		// return value was discarded, so a failed validation still flipped the button
+		// and the next click applied whatever stale text was in storedOcrResponse
+		// (e.g. the literal "OCR Failed" set by the ajax error handler).
+		if (confirmOCRresult() === true) {
+			updateState = "ready";
+			const btn = document.getElementById("updateButton");
+			btn.innerText = "Update Form";
+			btn.value = "Update Form";
+		}
 		return false;
 	} else {
 		return UpdateFromWithOCR();
@@ -954,7 +997,7 @@ function confirmOCRresult() {
 	if(!ocrAnalysisMode){
 		storedOcrResponse = rawText;
 		console.log("OCR response confirmed (no analysis mode)");
-		return false;
+		return true;
 	}
 
 	rawText = normalizeFieldValueText(rawText);
@@ -1003,7 +1046,7 @@ function confirmOCRresult() {
 
 	storedOcrResponse = rawText;
 	console.log("OCR response confirmed");
-	return false;
+	return true;
 }
 
 function UpdateFromWithOCR() {
