@@ -268,18 +268,6 @@ function submitQueryForm(qryIndex){
 	if(verifyQueryForm(f)) f.submit();
 }
 
-// For quick entry form 
-function toggleDetail(){
-	var btn = document.getElementById("detail-btn");
-	if (btn.value === "detailed") {
-		btn.value = "minimal";
-		btn.innerHTML = "Minimal";
-	} else {
-		btn.value = "detailed";
-		btn.innerHTML = "Detailed";
-	}
-}
-
 function submitQueryEditor(f){
 	f.action = "occurrenceeditor.php"
 	f.direction.value = "";
