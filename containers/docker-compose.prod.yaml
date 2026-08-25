@@ -112,7 +112,14 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      # No credentials on purpose. compose substitutes ${...} at CONFIG time, so any
+      # password here is baked into the container's persisted Healthcheck.Test and
+      # printed by `podman inspect` -- the first command anyone runs when debugging.
+      # Measured on mysql:8.0.42: credential-free `mysqladmin ping` exits 0 while the
+      # server is up (it answers "Access denied", which still proves it answered) and
+      # exits 1 when nothing is listening. A healthcheck is judged on the exit code,
+      # so this distinguishes up from down without holding a secret.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
