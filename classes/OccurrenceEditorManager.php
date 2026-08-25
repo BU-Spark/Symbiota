@@ -1281,14 +1281,17 @@ class OccurrenceEditorManager {
 	}
 	
 
-	public function updateLastEdited($batchID, $currentImgId){
+	// $collID is required: it scopes the write to the collection the caller was authorized against,
+	// so a batchID belonging to another collection matches no row instead of being updated.
+	public function updateLastEdited($batchID, $currentImgId, $collID){
 		$success = false;
-		if (is_numeric($batchID) && is_numeric($currentImgId)) {
-			$sql = 'UPDATE batch SET last_edited = ? WHERE batchID = ?';
+		if (is_numeric($batchID) && is_numeric($currentImgId) && is_numeric($collID)) {
+			$sql = 'UPDATE batch SET last_edited = ? WHERE batchID = ? AND collID = ?';
 			if ($stmt = $this->conn->prepare($sql)) {
 				$batchID = (int)$batchID;
 				$currentImgId = (int)$currentImgId;
-				$stmt->bind_param('ii', $currentImgId, $batchID);
+				$collID = (int)$collID;
+				$stmt->bind_param('iii', $currentImgId, $batchID, $collID);
 				$success = $stmt->execute();
 				$stmt->close();
 			}

