@@ -123,6 +123,24 @@ if [ -f "$ENV_FILE" ]; then
     set -a  # Export all variables
     source "$ENV_FILE"
     set +a
+
+    # The mounted env file is shared with the db service, so it carries
+    # MYSQL_ROOT_PASSWORD. The web tier never needs it: config/dbconnection.php
+    # connects as MYSQL_USER / MYSQL_USER_RO only. Left exported, it would sit in
+    # the Apache/PHP process environment, readable by anything that can dump
+    # /proc/self/environ or call getenv() -- an unnecessary escalation from
+    # "can run PHP" to "has the DB root password".
+    #
+    # A denylist, not an allowlist, on purpose: config/symbini.php resolves 22
+    # settings through getenv() with silent `?:` fallbacks, so an allowlist that
+    # missed a new variable would not error -- it would quietly serve the default.
+    # A wrong-but-running portal is harder to notice than a missing variable.
+    for secret_var in MYSQL_ROOT_PASSWORD; do
+        if [ -n "${!secret_var-}" ]; then
+            unset "$secret_var"
+            echo "  ✓ $secret_var withheld from the web process environment"
+        fi
+    done
 else
     echo "  ℹ No .env file found in config overlay (optional)"
 fi
