@@ -1003,8 +1003,39 @@ EOF
     cd "$CONTAINERS_DIR"
     $COMPOSE_CMD -f "$temp_compose" up -d >/dev/null 2>&1
 
-    # Wait briefly for MySQL
-    sleep 5
+    # Tear the verify container and temp compose file down on EVERY exit path, not
+    # just the happy one. This function runs under `set -e`, and the assignments
+    # below are bare command substitutions -- if the DB is not answering yet, the
+    # script dies mid-function and would otherwise leave a running container and a
+    # stray .bootstrap-verify.yaml behind, with no diagnostic at all.
+    # EXIT as well as RETURN, and this is not belt-and-braces: verified that a
+    # RETURN trap does NOT fire when `set -e` aborts the script from inside a
+    # function -- only EXIT does. A RETURN-only trap would have been silent in
+    # exactly the case it was written for. Disarms itself so it runs once.
+    verify_cleanup() {
+        trap - EXIT RETURN
+        $COMPOSE_CMD -f "$temp_compose" down >/dev/null 2>&1 || true
+        rm -f "$temp_compose"
+    }
+    trap verify_cleanup EXIT RETURN
+
+    # Wait for an AUTHENTICATED query, not a fixed sleep and not `mysqladmin ping`.
+    # During the official image's init a temporary server already answers pings while
+    # the root password has not been applied yet, so both a sleep and a ping can
+    # return before the DB will accept credentials -- and every check below then
+    # fails with "Access denied", which looks exactly like a broken schema.
+    local ready=0 i
+    for i in $(seq 1 60); do
+        if $DOCKER_CMD exec symbiota-mysql-verify \
+                mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; then
+            ready=1; break
+        fi
+        sleep 2
+    done
+    if [ "$ready" -ne 1 ]; then
+        log_error "verify database never accepted a connection; cannot verify the schema"
+        return 1
+    fi
 
     # A table count alone is a weak check: it passed at 146 tables while the
     # geography reference data was empty and three feature patches had recorded
@@ -1016,7 +1047,7 @@ EOF
     }
 
     local table_count geo_rows sv_width missing_tables recorded_versions
-    table_count=$(vq "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE';")
+    table_count=$(vq "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE';") || table_count=""
     : "${table_count:=0}"
 
     # Tables that must exist: upstream core, plus one per fork feature patch.
@@ -1031,13 +1062,13 @@ EOF
     # Reference data: db_schema-3.0.sql SOURCEs this, and the SOURCE silently
     # no-ops if the client's cwd is wrong. An empty table here means every
     # geography lookup in the portal returns nothing.
-    geo_rows=$(vq "SELECT COUNT(*) FROM geographicthesaurus;")
+    geo_rows=$(vq "SELECT COUNT(*) FROM geographicthesaurus;") || geo_rows=""
     : "${geo_rows:=0}"
 
     # schemaversion.versionnumber must be wide enough for the fork's descriptive
     # patch names. At varchar(20) three of them are silently truncated by
     # INSERT IGNORE, which permanently breaks "has this patch been applied?".
-    sv_width=$(vq "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns WHERE table_schema='$MYSQL_DATABASE' AND table_name='schemaversion' AND column_name='versionnumber';")
+    sv_width=$(vq "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns WHERE table_schema='$MYSQL_DATABASE' AND table_name='schemaversion' AND column_name='versionnumber';") || sv_width=""
     : "${sv_width:=0}"
 
     # Full, untruncated feature-patch names.
@@ -1048,10 +1079,9 @@ EOF
             missing_versions="$missing_versions $v"
         fi
     done
-    recorded_versions=$(vq "SELECT GROUP_CONCAT(versionnumber ORDER BY id) FROM schemaversion;")
+    recorded_versions=$(vq "SELECT GROUP_CONCAT(versionnumber ORDER BY id) FROM schemaversion;") || recorded_versions=""
 
-    $COMPOSE_CMD -f "$temp_compose" down >/dev/null 2>&1
-    rm -f "$temp_compose"
+    # Teardown is handled by the RETURN trap above.
 
     local verify_failed=0
     [ "$table_count" -gt 50 ] || { log_error "Only $table_count tables found"; verify_failed=1; }
