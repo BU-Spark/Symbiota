@@ -676,8 +676,8 @@ else{
 		<script src="../../js/jquery.imagetool-1.7.js?ver=140310" type="text/javascript"></script>
 		<script src="../../js/symb/collections.editor.query.js?ver=6" type="text/javascript"></script>
 		<script>
-			var record_created_utc = '<?php echo $occArr['modified']; ?>';
-			var last_modified_utc = '<?php echo $occArr['dateLastModified']; ?>';
+			var record_created_utc = <?php echo json_encode((string)($occArr['modified'] ?? ''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+			var last_modified_utc = <?php echo json_encode((string)($occArr['dateLastModified'] ?? ''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 			var userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 			// Function to convert UTC time to user's timezone
@@ -718,7 +718,12 @@ else{
 					var imgId = imgids[pageNumber-1] 
 					var crowdSourceMode = <?php echo $crowdSourceMode; ?>;
 					var gotomode = <?php echo $goToMode; ?>;
-					var collId = <?php echo $collId; ?>;
+					// $collId is set to false when non-numeric, and `var collId = ;` is a
+					// SyntaxError that kills this whole inline script -- the same failure
+					// the sanitation comment above describes for activeImgIndex. The
+					// declaration at the top of the page already falls back to 0; do the
+					// same here rather than emitting nothing.
+					var collId = <?php echo is_numeric($collId) ? (int)$collId : 0; ?>;
 					var batchId = <?php echo json_encode($batchId, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 					var occIndex = pageNumber - 1; 
 
@@ -819,7 +824,7 @@ else{
 					?>
 					<div id="statusdiv" style="margin:5px 0px 5px 15px;">
 						<b><?php echo (isset($LANG['ACTION_STATUS'])?$LANG['ACTION_STATUS']:'Action Status'); ?>: </b>
-						<span style="color:<?php echo (stripos($statusStr,'ERROR')!==false?'red':'green'); ?>;"><?php echo $statusStr; ?></span>
+						<span style="color:<?php echo (stripos($statusStr,'ERROR')!==false?'red':'green'); ?>;"><?php echo htmlspecialchars((string)$statusStr, ENT_QUOTES, 'UTF-8'); ?></span>
 						<?php
 						if($action == 'Delete Occurrence'){
 							?>
@@ -841,7 +846,7 @@ else{
 					<div class="btn" name="jumpform">
 						<form method="post" style="margin: 5px;">
 							<button type="submit" name="toggle-button" value="<?php echo htmlspecialchars((string)(isset($_POST['toggle-button']) && $_POST['toggle-button'] === 'Minimal' ? 'Detailed' : 'Minimal'), ENT_QUOTES, 'UTF-8'); ?>">
-								<?php echo isset($_POST['toggle-button']) ? $_POST['toggle-button'] : 'Detailed'; ?>
+								<?php echo htmlspecialchars((string)(isset($_POST['toggle-button']) ? $_POST['toggle-button'] : 'Detailed'), ENT_QUOTES, 'UTF-8'); ?>
 							</button>
 							<button type="button" onclick="jumpToPage()">Jump to:</button>
 							<input type="number" id="pageNumber" size="3" />
@@ -1030,7 +1035,7 @@ else{
 								<div class="field-block">
 									<span class="field-label"><?php echo (defined('OCCURRENCEREMARKSLABEL')?OCCURRENCEREMARKSLABEL:'Remarks'); ?></span>
 									<span class="field-elem">
-										<input size = '50' type="text" name="occurrenceremarks" value="<?php echo htmlspecialchars((string)(array_key_exists('occurrenceremarks',$occArr)?$occArr['occurrenceremarks']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('occurrenceremarks');" title="<?php echo $LANG['OCC_REMARKS']; ?>" />
+										<input size = '50' type="text" name="occurrenceremarks" value="<?php echo htmlspecialchars((string)(array_key_exists('occurrenceremarks',$occArr)?$occArr['occurrenceremarks']:''), ENT_QUOTES, 'UTF-8'); ?>" onchange="fieldChanged('occurrenceremarks');" title="<?php echo htmlspecialchars((string)($LANG['OCC_REMARKS'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
 									</span>
 								</div>
 							<?php endif; ?>
@@ -1121,7 +1126,7 @@ else{
 						</div>
 						<section>
 							<div class="info function-bar">
-								<div style="float:left;" title="<?php echo $LANG['PRIMARY_KEY']; ?>">
+								<div style="float:left;" title="<?php echo htmlspecialchars((string)($LANG['PRIMARY_KEY'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 									<?php if($occId) echo 'Key: '.$occManager->getOccId(); ?>
 								</div>
 							</div>
@@ -1133,7 +1138,7 @@ else{
 							</div>
 							<div class="info">
 								<span id="lastModified">
-									Last Modified: <?php echo $occArr["dateLastModified"]; ?>
+									Last Modified: <?php echo htmlspecialchars((string)($occArr["dateLastModified"] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
 								</span>
 							</div>
 						</section> 
