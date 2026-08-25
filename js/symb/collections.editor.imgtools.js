@@ -923,8 +923,17 @@ function normalizeFieldValueText(rawText){
 			consider(valueLine);
 			i = j;
 		}
-		else if(key){
+		else if(key && colonIndex === -1){
 			consider(key);
+		}
+		else if(key){
+			// A keyed line with an empty value, e.g. a trailing "Notes:" or "Elev:".
+			// The key half of a keyed line is NOT an institution code, and it matches
+			// institutionCodePattern, so passing it to consider() emitted
+			// "institutionCode: Notes" -- which then mapped cleanly in
+			// UpdateFromWithOCR and wrote to the field. Same corruption as the keyed
+			// values, arriving through the other door.
+			droppedLines.push(`${key}:`);
 		}
 	}
 
