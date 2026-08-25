@@ -6,15 +6,42 @@ if($LANG_TAG != 'en' && file_exists($SERVER_ROOT.'/content/lang/collections/edit
 else include_once($SERVER_ROOT.'/content/lang/collections/editor/transcribe.en.php');
 header("Content-Type: text/html; charset=".$CHARSET);
 
-if(!$SYMB_UID) header('Location: ../../profile/index.php?refurl=../collections/editor/transcribe.php?'.htmlspecialchars($_SERVER['QUERY_STRING'], ENT_QUOTES));
+// exit is required, not decorative: header() only queues a redirect, so without it
+// the whole page below still executes for an anonymous visitor -- running the batch
+// queries and rendering the form. Same defect as occurrencequickentry.php.
+// The old refurl also pointed at ../collections/editor/transcribe.php, which does
+// not exist; this file lives in collections/quickentry/.
+if(!$SYMB_UID){
+	header('Location: ../../profile/index.php?refurl='.rawurlencode('../collections/quickentry/transcribe.php?'.$_SERVER['QUERY_STRING']));
+	exit;
+}
+
+// Emit $val as a JS literal safe inside a double-quoted HTML event attribute.
+// json_encode handles the JS-string layer, htmlspecialchars the attribute layer;
+// either alone is insufficient. Same helper as occurrencequickentry.php --
+// function_exists-guarded because these are separate page entry points.
+if(!function_exists('qeJsAttrArg')){
+	function qeJsAttrArg($val){
+		if(!$val) return 'null';
+		$json = json_encode((string)$val, JSON_INVALID_UTF8_SUBSTITUTE);
+		if($json === false) return 'null';
+		return htmlspecialchars($json, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+	}
+}
 
 $crowdSourceMode = array_key_exists('csmode', $_REQUEST) ? filter_var($_REQUEST['csmode'], FILTER_SANITIZE_NUMBER_INT) : 0;
 $goToMode = array_key_exists('gotomode', $_REQUEST) ? filter_var($_REQUEST['gotomode'], FILTER_SANITIZE_NUMBER_INT) : 0;
 
+// Numeric-coerced for the same reason as occurrencequickentry.php: this value
+// reaches an href AND a bare JS argument list, and a number is safe in both.
+$collid = array_key_exists('collid', $_REQUEST) && is_numeric($_REQUEST['collid'])
+	? (int) $_REQUEST['collid'] : 0;
+
 $occManager = new OccurrenceEditorDeterminations();
+// Assigned before this call, not after: setCollId() previously received an
+// undefined $collid, so the collection map was fetched for nothing.
 $occManager->setCollId($collid);
 $collMap = $occManager->getCollMap();
-$collid = $_REQUEST['collid'];
 $qryCnt = $occManager->getQueryRecordCount();
 
 if($collMap){
@@ -50,7 +77,7 @@ $statusStr = '';
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 	if (isset($_POST["batchID"])) {
-		$selectedBatchID = $_POST["batchID"];
+		$selectedBatchID = is_numeric($_POST["batchID"]) ? (int) $_POST["batchID"] : 0;
 		$imgIDs = $occManager->getImgIDs($selectedBatchID);
 	} else {
 		$imgIDs = $occManager->getAllImgIDs();		
@@ -59,7 +86,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 	$firstBarcode = !empty($occManager->getBarcode($firstImgId)) ? ($occManager->getBarcode($firstImgId)) : 0;
 	$firstIndex = 0;
 	$lastImgId = end($imgIDs);
-	$lastBarcode = !empty($occManager->getBarcode($lastBarcode)) ? ($occManager->getBarcode($lastBarcode)) : 0;
+	$lastBarcode = !empty($occManager->getBarcode($lastImgId)) ? ($occManager->getBarcode($lastImgId)) : 0;
 	$lastIndex = count($imgIDs) - 1;
 	$occData = array();
 	$lastEditImgId = $occManager->getlastEdit($selectedBatchID);
@@ -113,7 +140,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 	?>
 	<div class='navpath'>
 		<a href='../../index.php'><?php echo $LANG['HOME']; ?></a> &gt;&gt;
-		<a href="../misc/collprofiles.php?collid=<?php echo $collid; ?>&emode=1"><?php echo $LANG['COLL_MANAGE']; ?></a> &gt;&gt;
+		<a href="../misc/collprofiles.php?collid=<?php echo (int)$collid; ?>&emode=1"><?php echo $LANG['COLL_MANAGE']; ?></a> &gt;&gt;
 		<b><?php echo $LANG['BATCH_DETERS']; ?></b>
 	</div>
 	<!-- This is inner text! -->
@@ -128,11 +155,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         <!-- TODO: update the submit function of the form -->
 						<form name="batchform" method="post">
 							<div style="margin-bottom:15px; align-items: center;">
-								<h4 style="margin-right: 15px;">Work On batch: <?php echo($selectedBatchID) ?></h4>
+								<h4 style="margin-right: 15px;">Work On batch: <?php echo htmlspecialchars((string)$selectedBatchID, ENT_QUOTES, 'UTF-8'); ?></h4>
 								<div style="display: flex; flex-grow: 1;">
-									<button type="button" name="first" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($firstImgId).', '.($firstIndex).', '.($firstBarcode).', '.($firstOccId).', '.($firstIndex) ; ?>)"><?php echo $LANG['START_FROM']; ?> first.</button>
-									<button type="button" name="last" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($lastImgId).', '.($lastIndex).', '.($lastBarcode).', '.($lastOccId).', '.($lastIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last.</button>
-									<button type="button" name="lastView" style="flex-grow: 0.5;" onclick="return navigateToRecordNew(<?php echo ($crowdSourceMode).', '.($goToMode).', '.($collid).', '.($selectedBatchID).', '.($lastEditImgId).', '.($lastEditIndex).', '.($lastEditBarcode).', '.($lastEditOccId).', '.($lastEditIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last edit.</button>
+									<button type="button" name="first" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo (int)$crowdSourceMode.', '.(int)$goToMode.', '.(int)$collid.', '.(int)$selectedBatchID.', '.($firstImgId).', '.($firstIndex).', '.qeJsAttrArg($firstBarcode).', '.($firstOccId).', '.($firstIndex) ; ?>)"><?php echo $LANG['START_FROM']; ?> first.</button>
+									<button type="button" name="last" style="flex-grow: 0.5; margin-right: 5px;" onclick="return navigateToRecordNew(<?php echo (int)$crowdSourceMode.', '.(int)$goToMode.', '.(int)$collid.', '.(int)$selectedBatchID.', '.($lastImgId).', '.($lastIndex).', '.qeJsAttrArg($lastBarcode).', '.($lastOccId).', '.($lastIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last.</button>
+									<button type="button" name="lastView" style="flex-grow: 0.5;" onclick="return navigateToRecordNew(<?php echo (int)$crowdSourceMode.', '.(int)$goToMode.', '.(int)$collid.', '.(int)$selectedBatchID.', '.($lastEditImgId).', '.($lastEditIndex).', '.qeJsAttrArg($lastEditBarcode).', '.($lastEditOccId).', '.($lastEditIndex); ?>)"><?php echo $LANG['START_FROM']; ?> last edit.</button>
 								</div>
 							</div>
 							<div>
