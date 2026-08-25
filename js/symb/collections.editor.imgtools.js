@@ -1090,9 +1090,18 @@ function UpdateFromWithOCR() {
 			console.warn(`OCR returned an empty value for '${key}'; leaving the field as it is.`);
 			return false;
 		}
-		// Deliberately not testing visibility (offsetParent etc): the "Minimal" toggle
-		// hides real, submitting fields, and skipping those would break normal transcription.
-		if (field.disabled || field.readOnly || field.type === 'hidden') {
+		// Only skip fields the form will NOT accept a value from. `disabled` inputs are
+		// not submitted at all, so writing to one shows the transcriber a value that
+		// silently will not save.
+		//
+		// type="hidden" is deliberately NOT skipped. The audit phrased this guard as
+		// "empty/disabled/hidden", but the form's ONLY institutionCode input is
+		// <input type="hidden" name="institutioncode"> (occurrencequickentry.php:1099)
+		// and it does submit. Skipping hidden inputs meant OCR could never populate
+		// institutionCode at all -- a regression introduced by the first version of
+		// this guard. Visibility is not tested either: the "Minimal" toggle hides real
+		// submitting fields.
+		if (field.disabled || field.readOnly) {
 			console.warn(`Field for '${key}' is not user-editable; not writing OCR output to it.`);
 			return false;
 		}
@@ -1142,13 +1151,25 @@ function UpdateFromWithOCR() {
 				value = value.match(barcodePattern)[0];
 			}
 			else {
-				// Unmapped line. Only a lone institution-code-shaped token is a plausible
-				// candidate for the institutionCode fallback below; everything else (habitat,
-				// elevation, collector number, free-text notes) has no home on this form and
-				// must NOT be concatenated into a controlled-vocabulary field.
-				const fallbackText = (value || key).trim();
+				// Unmapped line, and it has no home on this form. Report it rather than
+				// forcing it somewhere.
+				//
+				// Critically: a line that arrived as "key: value" is NEVER an institution
+				// code candidate, however short its value looks. institutionCodePattern
+				// matches any token of 2-12 chars, so considering values here assigned
+				// real data to institutionCode -- "county: Norfolk" became
+				// institutionCode "Norfolk", "family: Aceraceae" became "Aceraceae".
+				// That is worse than the concatenation bug it replaced, because a single
+				// plausible wrong value does not look like corruption.
+				//
+				// Only a BARE token (no key at all) can be an institution-code guess.
+				if (colonIndex !== -1) {
+					unmapped.push(`${key}: ${value}`);
+					return;
+				}
+				const fallbackText = key.trim();
 				if (!fallbackText) {
-					console.warn(`Unrecognized key '${key}' with empty value in OCR response.`);
+					console.warn(`Unrecognized empty line in OCR response.`);
 				} else if (institutionCodePattern.test(fallbackText)) {
 					institutionFallbackParts.push(fallbackText);
 				} else {
