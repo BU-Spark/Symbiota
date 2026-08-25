@@ -98,6 +98,22 @@ function applyConfidenceToField(elem, fieldKey, confidenceMap){
 		}
 	}
 	catch(err){ /* tooltip not available; title attr still shows native tooltip */ }
+
+	// The score describes the value the MODEL produced. Once a human edits the field
+	// the score no longer applies, so clear the styling on first input -- otherwise a
+	// corrected date keeps sitting there red at "ML confidence: 45%", which reads as
+	// "this is still wrong". `once` means the listener does not accumulate across
+	// repeated OCR runs on the same field.
+	elem.addEventListener("input", function(){
+		this.style.backgroundColor = "";
+		this.classList.remove("ml-confidence-field");
+		this.removeAttribute("data-confidence");
+		this.removeAttribute("title");
+		try{
+			if(typeof $ !== "undefined" && $(this).data("ui-tooltip")) $(this).tooltip("destroy");
+		}
+		catch(err){ /* no tooltip widget attached */ }
+	}, { once: true });
 }
 
 // Detect the structured envelope by its envelope markers (_confidence / _meta),
@@ -765,9 +781,10 @@ function quickEntryOcrImage(ocrButton, imgidVar, imgCnt, imgURl) {
 					if (key === "_confidence" || key === "_meta") continue;
 					plainTextResponse += `${key}: ${value}\n`;
 				}
-				if (ocrAnalysisMode) {
-					plainTextResponse = normalizeFieldValueText(plainTextResponse);
-				}
+				// Deliberately NOT normalizeFieldValueText'd, even in analysis mode: the
+				// middleware envelope is already `key: value` with canonical DWC keys, so
+				// normalising it can only lose fields (it keeps a 7-key allowlist and
+				// discards the rest). See audit low 7.
 				storedOcrResponse = plainTextResponse;
 				if (rawtextBox) rawtextBox.value = plainTextResponse;
 			}
@@ -820,8 +837,14 @@ function normalizeFieldValueText(rawText){
 	const barcodePattern = /^[A-Z]{1,3}\d{5,}$/i;
 	const institutionFallbackParts = [];
 	
-	const knownFields = ['recordedBy', 'location', 'scientificName', 'eventDate', 'barcode', 'institutionCode', 'image_path'];
-	
+	// The fields the quick-entry form can actually place, plus every DWC key the
+	// confidence pipeline emits. Without the dwcToFormField keys, a recognised line
+	// like "family: Aceraceae" is treated as unknown and destroyed below.
+	const knownFields = ['recordedBy', 'location', 'scientificName', 'eventDate', 'barcode', 'institutionCode', 'image_path']
+		.concat(Object.keys(dwcToFormField));
+	const institutionCodePattern = /^[A-Za-z0-9.\-]{2,12}$/;
+	const droppedLines = [];
+
 	for(let i = 0; i < lines.length; i++){
 		let line = lines[i].trim();
 		if(!line) continue;
@@ -856,19 +879,30 @@ function normalizeFieldValueText(rawText){
 			continue;
 		}
 
-		// If it has a colon and both key and value, keep it as-is for now
+		// An unrecognised "key: value" line. Its value is NOT institution data --
+		// pushing it here is what turned institutionCode into a dumping ground for the
+		// whole label. Keep the line intact so nothing is silently lost.
 		if(colonIndex !== -1 && key && value){
-			institutionFallbackParts.push(value);
+			normalized.push(`${key}: ${value}`);
 			continue;
 		}
-		
+
+		// Structureless text. Only a short code-shaped token is a plausible institution
+		// code ("BU", "NEBC"); prose is recorded and reported, never folded into a
+		// controlled-vocabulary field.
+		const consider = (text) => {
+			if(!text) return;
+			if(institutionCodePattern.test(text)) institutionFallbackParts.push(text);
+			else droppedLines.push(text);
+		};
+
 		// Single word or phrase without clear key-value structure
 		const spaceIndex = line.indexOf(" ");
 		if(spaceIndex !== -1 && colonIndex === -1){
 			const firstWord = line.slice(0, spaceIndex).trim();
 			const rest = line.slice(spaceIndex + 1).trim();
 			if(firstWord && rest){
-				institutionFallbackParts.push(rest);
+				consider(rest);
 				continue;
 			}
 		}
@@ -886,32 +920,50 @@ function normalizeFieldValueText(rawText){
 		}
 
 		if(valueLine){
-			institutionFallbackParts.push(valueLine);
+			consider(valueLine);
 			i = j;
 		}
+		else if(key && colonIndex === -1){
+			consider(key);
+		}
 		else if(key){
-			institutionFallbackParts.push(key);
+			// A keyed line with an empty value, e.g. a trailing "Notes:" or "Elev:".
+			// The key half of a keyed line is NOT an institution code, and it matches
+			// institutionCodePattern, so passing it to consider() emitted
+			// "institutionCode: Notes" -- which then mapped cleanly in
+			// UpdateFromWithOCR and wrote to the field. Same corruption as the keyed
+			// values, arriving through the other door.
+			droppedLines.push(`${key}:`);
 		}
 	}
-	
-	// Add institution code from fallback parts if we collected any
-	if(institutionFallbackParts.length > 0){
-		const institutionValue = institutionFallbackParts.join(" ").replace(/\s+/g, " ").trim();
-		if(institutionValue){
-			normalized.push(`institutionCode: ${institutionValue}`);
-		}
+
+	// Exactly one code-shaped candidate is a usable guess; two or more means we cannot
+	// tell which is the institution, so emitting either would be worse than emitting none.
+	if(institutionFallbackParts.length === 1){
+		normalized.push(`institutionCode: ${institutionFallbackParts[0]}`);
 	}
-	
+	else if(institutionFallbackParts.length > 1){
+		console.warn(`Multiple institution-code candidates (${institutionFallbackParts.join(", ")}); leaving institutionCode unset.`);
+	}
+	if(droppedLines.length){
+		console.info(`OCR text with no recognised field (${droppedLines.length}): ${droppedLines.join(" | ")}`);
+	}
+
 	return normalized.join("\n");
 }
 
 function handleUpdateButtonClick() {
 	if (updateState === "needsValidation") {
-		confirmOCRresult();
-		updateState = "ready";
-		const btn = document.getElementById("updateButton");
-		btn.innerText = "Update Form";
-		btn.value = "Update Form";
+		// Only advance to "Update Form" if validation actually passed. Previously the
+		// return value was discarded, so a failed validation still flipped the button
+		// and the next click applied whatever stale text was in storedOcrResponse
+		// (e.g. the literal "OCR Failed" set by the ajax error handler).
+		if (confirmOCRresult() === true) {
+			updateState = "ready";
+			const btn = document.getElementById("updateButton");
+			btn.innerText = "Update Form";
+			btn.value = "Update Form";
+		}
 		return false;
 	} else {
 		return UpdateFromWithOCR();
@@ -954,7 +1006,7 @@ function confirmOCRresult() {
 	if(!ocrAnalysisMode){
 		storedOcrResponse = rawText;
 		console.log("OCR response confirmed (no analysis mode)");
-		return false;
+		return true;
 	}
 
 	rawText = normalizeFieldValueText(rawText);
@@ -1003,7 +1055,7 @@ function confirmOCRresult() {
 
 	storedOcrResponse = rawText;
 	console.log("OCR response confirmed");
-	return false;
+	return true;
 }
 
 function UpdateFromWithOCR() {
@@ -1025,8 +1077,59 @@ function UpdateFromWithOCR() {
 	};
 
 	const barcodePattern = /^[A-Z]{1,3}\d{5,}$/i;
+	// An institution code is a short controlled-vocabulary token ("BU", "HUH", "NEBC"),
+	// never a sentence. Used to decide whether an unmapped OCR line could plausibly be
+	// one, instead of assuming every unmapped line is.
+	const institutionCodePattern = /^[A-Za-z0-9.\-]{2,12}$/;
 	const institutionFallbackParts = [];
 	let institutionAssigned = false;
+	const skipped = [];
+	const unmapped = [];
+
+	// Guarded write. OCR must never destroy data that is already on the record:
+	// an empty extraction, or a field the user cannot edit, is skipped rather than applied.
+	// Non-empty fields are also left alone and reported, so re-running OCR after a manual
+	// correction cannot silently revert it.
+	function applyOcrValue(field, value, key) {
+		if (!field) {
+			console.warn(`Unable to locate input field for key '${key}'.`);
+			return false;
+		}
+		if (!value || !value.trim()) {
+			console.warn(`OCR returned an empty value for '${key}'; leaving the field as it is.`);
+			return false;
+		}
+		// Only skip fields the form will NOT accept a value from. `disabled` inputs are
+		// not submitted at all, so writing to one shows the transcriber a value that
+		// silently will not save.
+		//
+		// type="hidden" is deliberately NOT skipped. The audit phrased this guard as
+		// "empty/disabled/hidden", but the form's ONLY institutionCode input is
+		// <input type="hidden" name="institutioncode"> (occurrencequickentry.php:1099)
+		// and it does submit. Skipping hidden inputs meant OCR could never populate
+		// institutionCode at all -- a regression introduced by the first version of
+		// this guard. Visibility is not tested either: the "Minimal" toggle hides real
+		// submitting fields.
+		if (field.disabled || field.readOnly) {
+			console.warn(`Field for '${key}' is not user-editable; not writing OCR output to it.`);
+			return false;
+		}
+		if (field.value && field.value.trim() && field.value.trim() !== value.trim()) {
+			// ponytail: preserve the human's value. Flip to overwrite-always by deleting
+			// this block if curators would rather OCR win.
+			skipped.push(key);
+			const keepBlock = field.closest(".field-block") || field.closest(".field-div");
+			const keepLabel = keepBlock ? keepBlock.querySelector(".field-label") : null;
+			if (keepLabel) keepLabel.classList.add("ocr-conflict-label");
+			return false;
+		}
+		field.value = value;
+		field.dispatchEvent(new Event("change"));
+		const fieldBlock = field.closest(".field-block") || field.closest(".field-div");
+		const label = fieldBlock ? fieldBlock.querySelector(".field-label") : null;
+		if (label) label.classList.add("highlight-label");
+		return true;
+	}
 
 	lines.forEach(line => {
 		if (line.trim() === "") return;
@@ -1057,12 +1160,29 @@ function UpdateFromWithOCR() {
 				value = value.match(barcodePattern)[0];
 			}
 			else {
-				const fallbackTextSource = value || key;
-				const fallbackText = fallbackTextSource.trim();
-				if (fallbackText) {
+				// Unmapped line, and it has no home on this form. Report it rather than
+				// forcing it somewhere.
+				//
+				// Critically: a line that arrived as "key: value" is NEVER an institution
+				// code candidate, however short its value looks. institutionCodePattern
+				// matches any token of 2-12 chars, so considering values here assigned
+				// real data to institutionCode -- "county: Norfolk" became
+				// institutionCode "Norfolk", "family: Aceraceae" became "Aceraceae".
+				// That is worse than the concatenation bug it replaced, because a single
+				// plausible wrong value does not look like corruption.
+				//
+				// Only a BARE token (no key at all) can be an institution-code guess.
+				if (colonIndex !== -1) {
+					unmapped.push(`${key}: ${value}`);
+					return;
+				}
+				const fallbackText = key.trim();
+				if (!fallbackText) {
+					console.warn(`Unrecognized empty line in OCR response.`);
+				} else if (institutionCodePattern.test(fallbackText)) {
 					institutionFallbackParts.push(fallbackText);
 				} else {
-					console.warn(`Unrecognized key '${key}' with empty value in OCR response.`);
+					unmapped.push(fallbackText);
 				}
 				return;
 			}
@@ -1070,54 +1190,42 @@ function UpdateFromWithOCR() {
 
 		let field = fieldGetters[normalizedKey] ? fieldGetters[normalizedKey]() : null;
 
-		// Find the input field by key
-		if (field) {
-			field.value = value;
-			field.dispatchEvent(new Event("change"));
-
-			// Find the corresponding label and bold it
-			let fieldBlock = field.closest(".field-block") || field.closest(".field-div");
-			if (fieldBlock) {
-				let label = fieldBlock.querySelector(".field-label");
-				if (label) {
-					label.classList.add("highlight-label");
-				}
+		if (applyOcrValue(field, value, normalizedKey) && normalizedKey === 'institutionCode') {
+			institutionAssigned = true;
+			// Update the institution code display at the top of the page
+			const displayElement = document.getElementById("institution-code-display");
+			if (displayElement) {
+				displayElement.textContent = value;
 			}
-
-			if (normalizedKey === 'institutionCode') {
-				institutionAssigned = true;
-				// Update the institution code display at the top of the page
-				const displayElement = document.getElementById("institution-code-display");
-				if (displayElement) {
-					displayElement.textContent = value;
-				}
-			}
-		} else {
-			console.warn(`Unable to locate input field for key '${normalizedKey}'.`);
 		}
 	});
 
-	if (!institutionAssigned && institutionFallbackParts.length) {
+	// Exactly one code-shaped candidate is a usable guess; two or more means we do not know
+	// which is the institution, so guessing would be worse than leaving the field blank.
+	if (!institutionAssigned && institutionFallbackParts.length === 1) {
 		const institutionField = fieldGetters['institutionCode'] ? fieldGetters['institutionCode']() : null;
-		const institutionValue = institutionFallbackParts.join(" ").replace(/\s+/g, " ").trim();
-		if (institutionField && institutionValue) {
-			institutionField.value = institutionValue;
-			institutionField.dispatchEvent(new Event("change"));
-			let fieldBlock = institutionField.closest(".field-block") || institutionField.closest(".field-div");
-			if (fieldBlock) {
-				let label = fieldBlock.querySelector(".field-label");
-				if (label) {
-					label.classList.add("highlight-label");
-				}
-			}
+		const institutionValue = institutionFallbackParts[0];
+		if (applyOcrValue(institutionField, institutionValue, 'institutionCode')) {
 			// Update the institution code display at the top of the page
 			const displayElement = document.getElementById("institution-code-display");
 			if (displayElement) {
 				displayElement.textContent = institutionValue;
 			}
 		}
+	} else if (!institutionAssigned && institutionFallbackParts.length > 1) {
+		console.warn(`Multiple institution-code candidates (${institutionFallbackParts.join(", ")}); leaving institutionCode blank.`);
 	}
-	
+
+	// Tell the transcriber what OCR read but could not place, instead of silently
+	// discarding it or hiding it in institutionCode. This form has no field for these.
+	if (unmapped.length) {
+		console.info(`OCR text with no matching field on this form (${unmapped.length}): ${unmapped.join(" | ")}`);
+	}
+	if (skipped.length) {
+		alert("OCR differed from values already on the record for: " + skipped.join(", ") +
+			"\n\nThose fields were left unchanged. Clear a field and re-run OCR if you want the OCR value.");
+	}
+
 	// Reset button state after successful update
 	const updateButton = document.getElementById("updateButton");
 	if (updateButton) {

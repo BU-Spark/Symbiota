@@ -92,6 +92,17 @@ button{
     transition: background-color 0.3s, color 0.3s;
 }
 
+/* OCR read this field but the record already held a different value, so the existing
+   value was kept. Outline rather than fill, to read as "look at this" and not as
+   .highlight-label's "this was just filled in for you". */
+.ocr-conflict-label {
+    font-weight: bold;
+    color: black;
+    outline: 2px dashed #b36b00;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
 /* ===========================================================================
    ML confidence display for OCR-populated fields
    (set programmatically by collections.editor.imgtools.js via quickEntryOcrImage)
