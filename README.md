@@ -56,3 +56,5 @@ Please read the [UPDATE.md](docs/UPDATE.md) file for instructions on how to upda
 ## CONTRIBUTING
 
 Please visit the [CONTRIBUTING.md](docs/CONTRIBUTING.md) page for guidance on contributing to the main Symbiota codebase.
+
+<!-- alpha CD pipeline proof: 2026-08-25T16:06:26Z -->
